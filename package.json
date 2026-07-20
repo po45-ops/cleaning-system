@@ -10,7 +10,7 @@
   ],
   "main": "src/index.tsx",
   "dependencies": {
-    "docx": "^9.5.1",
+    "docx": "8.5.0",
     "html2pdf.js": "^0.10.3",
     "loader-utils": "3.2.1",
     "lucide-react": "1.17.0",
