@@ -1,4 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
+import * as XLSX from "xlsx";
+import html2pdf from "html2pdf.js";
+import {
+  AlignmentType,
+  BorderStyle,
+  Document,
+  Packer,
+  PageOrientation,
+  Paragraph,
+  ShadingType,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+  VerticalAlign,
+  WidthType,
+} from "docx";
 import {
   Camera,
   CheckCircle,
@@ -20,6 +37,9 @@ import {
   Trash2,
   UserPlus,
   Edit,
+  Save,
+  TableProperties,
+  Sparkles,
 } from "lucide-react";
 
 // === URL ฐานข้อมูล Google Sheets ของคุณ ===
@@ -335,6 +355,43 @@ export default function App() {
     }
   };
 
+  // ใช้จุดอัปเดตเดียวกันทั้งหน้าอนุมัติ ตารางรายงาน และปฏิทิน
+  // เมื่อบันทึกสำเร็จทุกหน้าจะเห็นคะแนนล่าสุดจาก Google Sheets ทันที
+  const updateInspectionRecord = async (updatedItem) => {
+    try {
+      const payload = {
+        action: "update",
+        id: updatedItem.id,
+        score: Number(updatedItem.score),
+        notes: updatedItem.notes || "",
+        status: updatedItem.status,
+        date: updatedItem.date,
+      };
+      const res = await fetch(SCRIPT_URL, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (json.status !== "success") {
+        alert("เกิดข้อผิดพลาดจากเซิร์ฟเวอร์: " + json.message);
+        return false;
+      }
+
+      setInspections((current) =>
+        deduplicateInspections(
+          current.map((item) =>
+            String(item.id) === String(updatedItem.id) ? updatedItem : item
+          )
+        )
+      );
+      await fetchFromSheets();
+      return true;
+    } catch (e) {
+      alert("เชื่อมต่อฐานข้อมูลล้มเหลว กรุณาลองใหม่อีกครั้ง");
+      return false;
+    }
+  };
+
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const confirmLogout = () => {
@@ -482,69 +539,13 @@ export default function App() {
                 deleteInspection={deleteInspection}
                 userRole={user.role}
                 updateStatus={async (id, status) => {
-                  try {
-                    const item = inspections.find((i) => i.id === id);
-                    const payload = {
-                      action: "update",
-                      id,
-                      score: item.score,
-                      notes: item.notes,
-                      status,
-                      date: item.date,
-                    };
-                    const res = await fetch(SCRIPT_URL, {
-                      method: "POST",
-                      body: JSON.stringify(payload),
-                    });
-                    const json = await res.json();
-                    if (json.status === "success") {
-                      setInspections(
-                        inspections.map((item) =>
-                          item.id === id ? { ...item, status } : item
-                        )
-                      );
-                      await fetchFromSheets();
-                      return true;
-                    } else {
-                      alert("เกิดข้อผิดพลาดจากเซิร์ฟเวอร์: " + json.message);
-                      return false;
-                    }
-                  } catch (e) {
-                    alert("เชื่อมต่อฐานข้อมูลล้มเหลว");
-                    return false;
-                  }
+                  const item = inspections.find(
+                    (inspection) => String(inspection.id) === String(id)
+                  );
+                  if (!item) return false;
+                  return updateInspectionRecord({ ...item, status });
                 }}
-                updateInspection={async (updatedItem) => {
-                  try {
-                    const payload = {
-                      action: "update",
-                      id: updatedItem.id,
-                      score: updatedItem.score,
-                      notes: updatedItem.notes,
-                      status: updatedItem.status,
-                      date: updatedItem.date,
-                    };
-                    const res = await fetch(SCRIPT_URL, {
-                      method: "POST",
-                      body: JSON.stringify(payload),
-                    });
-                    const json = await res.json();
-                    if (json.status === "success") {
-                      setInspections(
-                        inspections.map((item) =>
-                          item.id === updatedItem.id ? updatedItem : item
-                        )
-                      );
-                      return true;
-                    } else {
-                      alert("เกิดข้อผิดพลาดจากเซิร์ฟเวอร์: " + json.message);
-                      return false;
-                    }
-                  } catch (e) {
-                    alert("เชื่อมต่อฐานข้อมูลล้มเหลว");
-                    return false;
-                  }
-                }}
+                updateInspection={updateInspectionRecord}
               />
             )}
             {activeTab === "calendar" && (
@@ -555,6 +556,7 @@ export default function App() {
                 inspections={inspections}
                 schoolLogo={schoolLogo}
                 setSchoolLogo={setSchoolLogo}
+                updateInspection={updateInspectionRecord}
               />
             )}
             {user.role === "admin" && activeTab === "users" && (
@@ -1864,9 +1866,17 @@ function TeacherApproval({
   );
 }
 
-function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
+function ReportView({
+  inspections,
+  schoolLogo,
+  setSchoolLogo,
+  updateInspection,
+}) {
   const [selectedReportWeek, setSelectedReportWeek] = useState(1);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [exporting, setExporting] = useState("");
+  const [savingCell, setSavingCell] = useState("");
+  const [savedCell, setSavedCell] = useState("");
   const [reportMode, setReportMode] = useState("weekly");
 
   const [settings, setSettings] = useState(() => {
@@ -1955,14 +1965,16 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
   const getSemesterScore = (weekNo, zoneId) => {
     return approvedData
       .filter(
-        (i) => i.zoneId === zoneId && getWeekNumFromDate(i.date) === weekNo
+        (i) =>
+          Number(i.zoneId) === Number(zoneId) &&
+          getWeekNumFromDate(i.date) === weekNo
       )
       .reduce((sum, item) => sum + (Number(item.score) || 0), 0);
   };
 
   const getZoneTotalSemester = (zoneId) => {
     return approvedData
-      .filter((i) => i.zoneId === zoneId)
+      .filter((i) => Number(i.zoneId) === Number(zoneId))
       .reduce((sum, item) => sum + (Number(item.score) || 0), 0);
   };
 
@@ -1978,127 +1990,516 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
     (item) => getWeekNumFromDate(item.date) === selectedReportWeek
   );
 
-  const exportToCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
-    if (reportMode === "weekly") {
-      csvContent += `รายงานสรุปผลการตรวจรายสัปดาห์ สัปดาห์ที่ ${selectedReportWeek}\n`;
-      csvContent += "วันที่,เขตพื้นที่,ชั้นที่รับผิดชอบ,คะแนน,หมายเหตุ\n";
-      weeklyFilteredData.forEach((item) => {
-        const zone = ZONES.find((z) => z.id === item.zoneId);
-        const row = `${item.date},${zone?.name},${zone?.fullClass},${
-          item.score
-        },"${item.notes || "-"}"`;
-        csvContent += row + "\n";
-      });
-    } else {
-      csvContent +=
-        "สัปดาห์ที่,เขต 1,เขต 2,เขต 3,เขต 4,เขต 5,เขต 6,เขต 7,เขต 8,เขต 9\n";
-      WEEKS.forEach((w) => {
-        const row = [
-          w,
-          ...ZONES.map((z) => getSemesterScore(w, z.id) || "0"),
-        ].join(",");
-        csvContent += row + "\n";
-      });
-      csvContent += `รวมคะแนน,${ZONES.map((z) =>
-        getZoneTotalSemester(z.id)
-      ).join(",")}\n`;
-    }
-    const encodedUri = encodeURI(csvContent);
+  const reportFileName = (extension) =>
+    `รายงานตรวจเวร_${
+      reportMode === "weekly" ? `สัปดาห์_${selectedReportWeek}` : "ภาคเรียน"
+    }.${extension}`;
+
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute(
-      "download",
-      `รายงานตรวจเวร_${
-        reportMode === "weekly"
-          ? "สัปดาห์ที่_" + selectedReportWeek
-          : "ภาคเรียน"
-      }.csv`
-    );
+    link.href = url;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const exportToWord = () => {
-    const element = document.getElementById("printable-area");
-    if (!element) return;
-    const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-    <head><meta charset='utf-8'><style>
-        @import url('https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/THSarabunNew/THSarabunNew.css');
-        @font-face { font-family: 'TH Sarabun PSK'; }
-        @page { size: A4 portrait; margin: 10mm; }
-        body, table, td, th, div, p, span, h1, h2, h3 { font-family: 'THSarabunNew', 'TH Sarabun PSK', sans-serif !important; }
-        body { font-size: 16pt; }
-        table { border-collapse: collapse; margin-bottom: 20px; width: 100%; page-break-inside: auto; }
-        thead { display: table-header-group; }
-        tr { page-break-inside: avoid; break-inside: avoid; }
-        td, th { border: 1pt solid black !important; padding: 5px; text-align: center; }
-        h1, h2 { text-align: center; font-weight: bold; }
-    </style></head><body>`;
-    const html = header + element.innerHTML + "</body></html>";
-    const blob = new Blob(["\ufeff", html], { type: "application/msword" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `รายงานตรวจเวร_${
-      reportMode === "weekly" ? "สัปดาห์_" + selectedReportWeek : "ภาคเรียน"
-    }.doc`;
-    link.click();
+  const exportToExcel = async () => {
+    setExporting("excel");
+    try {
+      const workbook = XLSX.utils.book_new();
+      let summaryRows = [];
+
+      if (reportMode === "weekly") {
+        summaryRows = [
+          [`รายงานตรวจเวร สัปดาห์ที่ ${selectedReportWeek}`],
+          [
+            `ระหว่างวันที่ ${formatThaiDateShort(
+              currentWeekDates[0]
+            )} - ${formatThaiDateShort(currentWeekDates[4])}`,
+          ],
+          [
+            "เขตพื้นที่",
+            "ชั้น",
+            ...currentWeekDates.map((date) =>
+              new Intl.DateTimeFormat("th-TH", {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+              }).format(new Date(`${date}T12:00:00`))
+            ),
+            "รวม",
+          ],
+          ...ZONES.map((zone) => {
+            const dayScores = currentWeekDates.map((date) => {
+              const record = approvedData.find(
+                (item) =>
+                  Number(item.zoneId) === zone.id &&
+                  formatDateKey(item.date) === date
+              );
+              return record ? Number(record.score) : "";
+            });
+            const total = dayScores.reduce(
+              (sum, score) => sum + (score === "" ? 0 : Number(score)),
+              0
+            );
+            return [
+              zone.name,
+              zone.fullClass,
+              ...dayScores,
+              dayScores.some((score) => score !== "") ? total : "",
+            ];
+          }),
+        ];
+      } else {
+        summaryRows = [
+          [
+            `สรุปผลรายภาคเรียนที่ ${settings.term} ปีการศึกษา ${settings.year}`,
+          ],
+          ["สัปดาห์ที่", ...ZONES.map((zone) => zone.name)],
+          ...WEEKS.map((week) => [
+            week,
+            ...ZONES.map((zone) => getSemesterScore(week, zone.id)),
+          ]),
+          ["รวมคะแนน", ...ZONES.map((zone) => getZoneTotalSemester(zone.id))],
+          [
+            "คิดเป็น %",
+            ...ZONES.map((zone) =>
+              Number(((getZoneTotalSemester(zone.id) / 315) * 100).toFixed(0))
+            ),
+          ],
+        ];
+      }
+
+      const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+      const lastColumn = reportMode === "weekly" ? "H" : "J";
+      summarySheet["!merges"] = [
+        XLSX.utils.decode_range(`A1:${lastColumn}1`),
+      ];
+      if (reportMode === "weekly") {
+        summarySheet["!merges"].push(
+          XLSX.utils.decode_range(`A2:${lastColumn}2`)
+        );
+        summarySheet["!autofilter"] = { ref: "A3:H12" };
+        summarySheet["!cols"] = [
+          { wch: 14 },
+          { wch: 28 },
+          ...Array.from({ length: 5 }, () => ({ wch: 13 })),
+          { wch: 10 },
+        ];
+      } else {
+        summarySheet["!autofilter"] = { ref: "A2:J23" };
+        summarySheet["!cols"] = [
+          { wch: 13 },
+          ...Array.from({ length: 9 }, () => ({ wch: 11 })),
+        ];
+      }
+      summarySheet["!margins"] = {
+        left: 0.3,
+        right: 0.3,
+        top: 0.5,
+        bottom: 0.5,
+        header: 0.2,
+        footer: 0.2,
+      };
+      summarySheet["!pageSetup"] = {
+        orientation: reportMode === "semester" ? "landscape" : "portrait",
+        fitToWidth: 1,
+        fitToHeight: 0,
+        paperSize: 9,
+      };
+      XLSX.utils.book_append_sheet(workbook, summarySheet, "สรุปผล");
+
+      const detailRows = [
+        [
+          "วันที่",
+          "เขตพื้นที่",
+          "ชั้น",
+          "คะแนน",
+          "สถานะ",
+          "หมายเหตุ",
+          "รูปที่ 1",
+          "รูปที่ 2",
+          "รูปที่ 3",
+        ],
+        ...(reportMode === "weekly" ? weeklyFilteredData : approvedData).map(
+          (item) => {
+            const zone = ZONES.find(
+              (zoneItem) => zoneItem.id === Number(item.zoneId)
+            );
+            return [
+              formatDateKey(item.date),
+              zone?.name || "",
+              zone?.fullClass || "",
+              Number(item.score),
+              item.status === "approved" ? "อนุมัติ" : item.status,
+              item.notes || "",
+              item.images?.[0] || "",
+              item.images?.[1] || "",
+              item.images?.[2] || "",
+            ];
+          }
+        ),
+      ];
+      const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
+      detailSheet["!autofilter"] = {
+        ref: `A1:I${Math.max(detailRows.length, 1)}`,
+      };
+      detailSheet["!cols"] = [
+        { wch: 13 },
+        { wch: 13 },
+        { wch: 26 },
+        { wch: 9 },
+        { wch: 12 },
+        { wch: 34 },
+        { wch: 35 },
+        { wch: 35 },
+        { wch: 35 },
+      ];
+      XLSX.utils.book_append_sheet(workbook, detailSheet, "ข้อมูลรายวัน");
+      XLSX.writeFile(workbook, reportFileName("xlsx"), {
+        compression: true,
+      });
+    } finally {
+      setExporting("");
+    }
   };
 
-  const printReport = () => {
+  const createWordCell = (
+    value,
+    { bold = false, fill = "FFFFFF", align = AlignmentType.CENTER } = {}
+  ) =>
+    new TableCell({
+      verticalAlign: VerticalAlign.CENTER,
+      shading: { fill, type: ShadingType.CLEAR },
+      borders: {
+        top: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
+        bottom: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
+        left: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
+        right: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
+      },
+      children: [
+        new Paragraph({
+          alignment: align,
+          spacing: { before: 0, after: 0 },
+          children: [
+            new TextRun({
+              text: String(value ?? ""),
+              bold,
+              font: "TH Sarabun New",
+              size: 28,
+            }),
+          ],
+        }),
+      ],
+    });
+
+  const exportToWord = async () => {
+    setExporting("word");
+    try {
+      const title =
+        reportMode === "weekly"
+          ? `ตารางบันทึกการปฏิบัติงานทำความสะอาดเขตพื้นที่รับผิดชอบ\nสัปดาห์ที่ ${selectedReportWeek}`
+          : `แบบสรุปผลการประเมินรายภาคเรียนที่ ${settings.term} ปีการศึกษา ${settings.year}`;
+
+      const headerRow =
+        reportMode === "weekly"
+          ? ["เขตพื้นที่ / ชั้น", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "รวม"]
+          : ["สัปดาห์ที่", ...ZONES.map((zone) => zone.name)];
+      const dataRows =
+        reportMode === "weekly"
+          ? ZONES.map((zone) => {
+              const scores = currentWeekDates.map((date) => {
+                const record = approvedData.find(
+                  (item) =>
+                    Number(item.zoneId) === zone.id &&
+                    formatDateKey(item.date) === date
+                );
+                return record ? Number(record.score) : "-";
+              });
+              const total = scores.reduce(
+                (sum, score) => sum + (score === "-" ? 0 : Number(score)),
+                0
+              );
+              return [
+                `${zone.name} ${zone.fullClass}`,
+                ...scores,
+                scores.some((score) => score !== "-") ? total : "-",
+              ];
+            })
+          : WEEKS.map((week) => [
+              week,
+              ...ZONES.map((zone) => getSemesterScore(week, zone.id) || "-"),
+            ]);
+
+      if (reportMode === "semester") {
+        dataRows.push([
+          "รวมคะแนน",
+          ...ZONES.map((zone) => getZoneTotalSemester(zone.id)),
+        ]);
+        dataRows.push([
+          "คิดเป็น %",
+          ...ZONES.map((zone) =>
+            ((getZoneTotalSemester(zone.id) / 315) * 100).toFixed(0)
+          ),
+        ]);
+      }
+
+      const reportTable = new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [
+          new TableRow({
+            tableHeader: true,
+            cantSplit: true,
+            children: headerRow.map((value) =>
+              createWordCell(value, { bold: true, fill: "D1FAE5" })
+            ),
+          }),
+          ...dataRows.map(
+            (row, rowIndex) =>
+              new TableRow({
+                cantSplit: true,
+                children: row.map((value, columnIndex) =>
+                  createWordCell(value, {
+                    bold:
+                      columnIndex === 0 ||
+                      (reportMode === "semester" &&
+                        rowIndex >= dataRows.length - 2),
+                    fill: rowIndex % 2 === 1 ? "F8FAFC" : "FFFFFF",
+                    align:
+                      columnIndex === 0 && reportMode === "weekly"
+                        ? AlignmentType.LEFT
+                        : AlignmentType.CENTER,
+                  })
+                ),
+              })
+          ),
+        ],
+      });
+
+      const children = [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 80 },
+          children: [
+            new TextRun({
+              text: title,
+              bold: true,
+              font: "TH Sarabun New",
+              size: 38,
+            }),
+          ],
+        }),
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 180 },
+          children: [
+            new TextRun({
+              text: "โรงเรียนไตรธารวิทยา",
+              bold: true,
+              font: "TH Sarabun New",
+              size: 32,
+            }),
+          ],
+        }),
+        reportTable,
+        new Paragraph({
+          spacing: { before: 260 },
+          alignment: AlignmentType.CENTER,
+          children: [
+            new TextRun({
+              text:
+                reportMode === "weekly"
+                  ? `ลงชื่อ ................................ ประธานนักเรียน     ลงชื่อ ................................ ครูกิจการนักเรียน     ลงชื่อ ................................ ผู้อำนวยการโรงเรียน`
+                  : `ลงชื่อ ........................................................ (${settings.headStudentAffairs || "ผู้รับผิดชอบ"}) หัวหน้าฝ่ายกิจการและพัฒนานักเรียน`,
+              font: "TH Sarabun New",
+              size: 28,
+            }),
+          ],
+        }),
+      ];
+
+      if (reportMode === "weekly") {
+        children.push(
+          new Paragraph({
+            pageBreakBefore: true,
+            spacing: { after: 120 },
+            children: [
+              new TextRun({
+                text: `รายละเอียดหลักฐาน สัปดาห์ที่ ${selectedReportWeek}`,
+                bold: true,
+                font: "TH Sarabun New",
+                size: 34,
+              }),
+            ],
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              new TableRow({
+                tableHeader: true,
+                cantSplit: true,
+                children: ["วันที่", "เขต", "คะแนน", "หมายเหตุ", "ลิงก์รูปภาพ"].map(
+                  (value) =>
+                    createWordCell(value, { bold: true, fill: "DBEAFE" })
+                ),
+              }),
+              ...weeklyFilteredData.map((item) => {
+                const zone = ZONES.find(
+                  (zoneItem) => zoneItem.id === Number(item.zoneId)
+                );
+                return new TableRow({
+                  cantSplit: true,
+                  children: [
+                    formatThaiDateShort(item.date),
+                    zone?.name || "",
+                    `${item.score}/3`,
+                    item.notes || "-",
+                    (item.images || []).join("\n"),
+                  ].map((value, index) =>
+                    createWordCell(value, {
+                      align: index >= 3 ? AlignmentType.LEFT : AlignmentType.CENTER,
+                    })
+                  ),
+                });
+              }),
+            ],
+          })
+        );
+      }
+
+      const documentFile = new Document({
+        sections: [
+          {
+            properties: {
+              page: {
+                size: {
+                  orientation:
+                    reportMode === "semester"
+                      ? PageOrientation.LANDSCAPE
+                      : PageOrientation.PORTRAIT,
+                },
+                margin: {
+                  top: 720,
+                  right: 720,
+                  bottom: 720,
+                  left: 720,
+                },
+              },
+            },
+            children,
+          },
+        ],
+      });
+      const blob = await Packer.toBlob(documentFile);
+      downloadBlob(blob, reportFileName("docx"));
+    } catch (error) {
+      console.error(error);
+      alert("สร้างไฟล์ Word ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setExporting("");
+    }
+  };
+
+  const printReport = async () => {
     const element = document.getElementById("printable-area");
     if (!element) return;
     setIsPrinting(true);
+    setExporting("pdf");
 
-    // 🚀 PDF ออกแบบเป็นแนวตั้ง (portrait) ขอบ 10mm ไม่ตัดแถวกลางทาง และไม่ล้นขอบ
+    const exportNode = element.cloneNode(true) as HTMLElement;
+    exportNode.classList.add("pdf-export-node");
+    exportNode.querySelectorAll(".screen-only").forEach((node) => node.remove());
+    exportNode.querySelectorAll(".print-only").forEach((node) => {
+      node.classList.remove("hidden", "print:block", "print:inline");
+    });
+    const holder = document.createElement("div");
+    holder.style.position = "fixed";
+    holder.style.left = "0";
+    holder.style.top = "0";
+    holder.style.zIndex = "-1000";
+    holder.style.pointerEvents = "none";
+    holder.style.background = "white";
+    holder.style.width = reportMode === "semester" ? "1122px" : "794px";
+    holder.appendChild(exportNode);
+    document.body.appendChild(holder);
+
     const opt = {
-      margin: 10,
-      filename: `รายงานตรวจเวร_${
-        reportMode === "weekly" ? "สัปดาห์_" + selectedReportWeek : "ภาคเรียน"
-      }.pdf`,
-      image: { type: "jpeg", quality: 1 },
-      pagebreak: { mode: ["css", "legacy"] },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      margin: [8, 8, 8, 8],
+      filename: reportFileName("pdf"),
+      image: { type: "jpeg", quality: 0.98 },
+      pagebreak: {
+        mode: ["css", "legacy"],
+        before: [".page-break-before"],
+        avoid: ["tr", ".avoid-break", ".photo-record"],
+      },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: "#ffffff",
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: reportMode === "semester" ? 1122 : 794,
+      },
+      jsPDF: {
+        unit: "mm",
+        format: "a4",
+        orientation: reportMode === "semester" ? "landscape" : "portrait",
+        compress: true,
+      },
     };
 
-    if (!window.html2pdf) {
-      const script = document.createElement("script");
-      script.src =
-        "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-      script.onload = () => {
-        window
-          .html2pdf()
-          .set(opt)
-          .from(element)
-          .save()
-          .then(() => setIsPrinting(false));
-      };
-      document.body.appendChild(script);
-    } else {
-      window
-        .html2pdf()
-        .set(opt)
-        .from(element)
-        .save()
-        .then(() => setIsPrinting(false));
+    try {
+      await html2pdf().set(opt).from(exportNode).save();
+    } catch (error) {
+      console.error(error);
+      alert("สร้างไฟล์ PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      document.body.removeChild(holder);
+      setIsPrinting(false);
+      setExporting("");
+    }
+  };
+
+  const handleInlineScoreChange = async (record, nextScore) => {
+    if (!record || Number(record.score) === Number(nextScore)) return;
+    const cellKey = `${record.id}-${formatDateKey(record.date)}`;
+    setSavingCell(cellKey);
+    setSavedCell("");
+    const success = await updateInspection({
+      ...record,
+      score: Number(nextScore),
+    });
+    setSavingCell("");
+    if (success) {
+      setSavedCell(cellKey);
+      window.setTimeout(() => setSavedCell(""), 1800);
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* 🚀 บังคับ CSS สำหรับหน้าพิมพ์โดยเฉพาะ ล็อกขนาด A4 แนวตั้ง ป้องกันการตัดหน้าและขอบแหว่ง */}
+      {/* กติกาหน้ากระดาษใช้ร่วมกันทั้งตัวอย่าง, Print และ PDF */}
       <style>{`
         @import url('https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/THSarabunNew/THSarabunNew.css');
         .font-sarabun, .font-sarabun * { 
           font-family: 'THSarabunNew', 'TH Sarabun PSK', sans-serif !important; 
         }
-        @page { size: A4 portrait; margin: 10mm; }
+        .pdf-export-node { box-sizing: border-box; width: 100%; padding: 24px; background: white; }
+        .avoid-break, .photo-record { break-inside: avoid; page-break-inside: avoid; }
+        .page-break-before { break-before: page; page-break-before: always; }
+        @page { size: A4 ${
+          reportMode === "semester" ? "landscape" : "portrait"
+        }; margin: 8mm; }
         @media print {
-          body { -webkit-print-color-adjust: exact; }
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .print-reset { overflow: visible !important; display: block !important; position: static !important; transform: none !important; }
           #printable-area { width: 100% !important; max-width: none !important; display: block !important; }
+          .screen-only { display: none !important; }
+          .print-only { display: inline !important; }
           table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
           thead { display: table-header-group; }
           tfoot { display: table-footer-group; }
@@ -2107,87 +2508,117 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
         }
       `}</style>
 
-      {/* 🛑 ส่วนควบคุม (ปุ่มต่างๆ) ไม่แสดงใน PDF 🛑 */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 print:hidden">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b pb-4 mb-4">
-          <div>
-            <h2 className="text-xl font-bold flex items-center gap-2 text-slate-800">
-              <FileSpreadsheet className="text-emerald-600" /> ระบบส่งออกรายงาน
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              ดึงข้อมูลจริงสรุปผลแยกรายเขตและสัปดาห์
-            </p>
-          </div>
-          <div className="flex gap-2 w-full md:w-auto">
-            <button
-              onClick={exportToCSV}
-              className="flex-1 md:flex-none bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
-            >
-              <FileSpreadsheet className="w-4 h-4" /> Excel
-            </button>
-            <button
-              onClick={exportToWord}
-              className="flex-1 md:flex-none bg-blue-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
-            >
-              <FileText className="w-4 h-4" /> Word
-            </button>
-            <button
-              onClick={printReport}
-              disabled={isPrinting}
-              className="flex-1 md:flex-none bg-slate-800 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
-            >
-              <Printer className="w-4 h-4" />{" "}
-              {isPrinting ? "รอสักครู่..." : "PDF"}
-            </button>
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm print:hidden">
+        <div className="relative overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-500 p-5 text-white md:p-7">
+          <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-white/10" />
+          <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
+            <div>
+              <span className="mb-3 inline-flex items-center gap-1 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold">
+                <Sparkles className="h-3.5 w-3.5" /> ศูนย์รายงานและส่งออก
+              </span>
+              <h2 className="text-2xl font-bold">รายงานพร้อมพิมพ์ ใช้ได้ทันที</h2>
+              <p className="mt-1 max-w-2xl text-sm text-emerald-50">
+                Word, PDF และ Excel เป็นไฟล์มาตรฐาน พร้อมจัดแนวกระดาษและหัวตารางให้เหมาะกับรายงานแต่ละแบบ
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 lg:min-w-[440px]">
+              <button
+                onClick={exportToExcel}
+                disabled={Boolean(exporting)}
+                className="group rounded-xl border border-white/20 bg-white p-3 text-left text-slate-800 shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
+              >
+                <FileSpreadsheet className="mb-2 h-5 w-5 text-emerald-600" />
+                <span className="block text-sm font-bold">Excel</span>
+                <span className="hidden text-[11px] text-slate-500 sm:block">ไฟล์ .xlsx</span>
+              </button>
+              <button
+                onClick={exportToWord}
+                disabled={Boolean(exporting)}
+                className="group rounded-xl border border-white/20 bg-white p-3 text-left text-slate-800 shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
+              >
+                <FileText className="mb-2 h-5 w-5 text-blue-600" />
+                <span className="block text-sm font-bold">Word</span>
+                <span className="hidden text-[11px] text-slate-500 sm:block">ไฟล์ .docx</span>
+              </button>
+              <button
+                onClick={printReport}
+                disabled={Boolean(exporting) || isPrinting}
+                className="group rounded-xl border border-white/20 bg-slate-900 p-3 text-left text-white shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
+              >
+                {exporting === "pdf" ? (
+                  <Clock className="mb-2 h-5 w-5 animate-spin" />
+                ) : (
+                  <Printer className="mb-2 h-5 w-5" />
+                )}
+                <span className="block text-sm font-bold">PDF</span>
+                <span className="hidden text-[11px] text-slate-300 sm:block">A4 พร้อมพิมพ์</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap bg-slate-100 p-1 rounded-lg gap-1 w-full md:w-fit mb-4">
-          <button
-            onClick={() => setReportMode("weekly")}
-            className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${
-              reportMode === "weekly"
-                ? "bg-white text-emerald-700 shadow-sm"
-                : "text-slate-600"
-            }`}
-          >
-            <CalendarDays className="w-4 h-4" /> รายงานรายสัปดาห์
-          </button>
-          <button
-            onClick={() => setReportMode("semester")}
-            className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${
-              reportMode === "semester"
-                ? "bg-white text-emerald-700 shadow-sm"
-                : "text-slate-600"
-            }`}
-          >
-            <BarChart3 className="w-4 h-4" /> สรุปผลรายภาคเรียน (21 สัปดาห์)
-          </button>
-        </div>
+        <div className="space-y-5 p-5 md:p-6">
+          <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+            <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 xl:w-auto">
+              <button
+                onClick={() => setReportMode("weekly")}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold transition-all xl:flex-none ${
+                  reportMode === "weekly"
+                    ? "bg-white text-emerald-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <CalendarDays className="h-4 w-4" /> รายสัปดาห์
+              </button>
+              <button
+                onClick={() => setReportMode("semester")}
+                className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold transition-all xl:flex-none ${
+                  reportMode === "semester"
+                    ? "bg-white text-emerald-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <BarChart3 className="h-4 w-4" /> ภาคเรียน 21 สัปดาห์
+              </button>
+            </div>
 
-        {reportMode === "weekly" && (
-          <div className="mb-4 flex items-center gap-3 bg-emerald-50 p-3 rounded-xl border border-emerald-200 animate-in fade-in">
-            <label className="font-bold text-emerald-900 text-sm whitespace-nowrap flex items-center gap-1">
-              <Clock className="w-4 h-4 text-emerald-600" />{" "}
-              เลือกสัปดาห์ย้อนหลังที่ต้องการดูประวัติ:
-            </label>
-            <select
-              value={selectedReportWeek}
-              onChange={(e) => setSelectedReportWeek(parseInt(e.target.value))}
-              className="p-2 border border-emerald-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-emerald-500 font-bold text-emerald-800 outline-none"
-            >
-              {WEEKS.map((w) => (
-                <option key={w} value={w}>
-                  สัปดาห์ที่ {w}
-                </option>
-              ))}
-            </select>
+            {reportMode === "weekly" && (
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-900">
+                <span className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-emerald-600" /> สัปดาห์ที่แสดง
+                </span>
+                <select
+                  value={selectedReportWeek}
+                  onChange={(e) =>
+                    setSelectedReportWeek(parseInt(e.target.value))
+                  }
+                  className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-bold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  {WEEKS.map((week) => (
+                    <option key={week} value={week}>
+                      สัปดาห์ที่ {week}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
-        )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t pt-4">
+          {reportMode === "weekly" && (
+            <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+              <TableProperties className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+              <div>
+                <p className="font-bold">แก้คะแนนได้จากตารางตัวอย่างด้านล่าง</p>
+                <p className="mt-0.5 text-xs text-blue-700">
+                  เลือกคะแนน 0–3 แล้วระบบจะบันทึกลงฐานข้อมูลและอัปเดตคะแนนในปฏิทินอัตโนมัติ
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 border-t border-slate-100 pt-5 md:grid-cols-3">
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">
+            <label className="mb-1 block text-xs font-semibold text-slate-500">
               ประธานนักเรียน
             </label>
             <input
@@ -2197,11 +2628,11 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
               onChange={(e) =>
                 setSettings({ ...settings, president: e.target.value })
               }
-              className="w-full p-2 border rounded-lg text-sm bg-slate-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">
+            <label className="mb-1 block text-xs font-semibold text-slate-500">
               ครูกิจการนักเรียน
             </label>
             <input
@@ -2211,11 +2642,11 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
               onChange={(e) =>
                 setSettings({ ...settings, teacher: e.target.value })
               }
-              className="w-full p-2 border rounded-lg text-sm bg-slate-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">
+            <label className="mb-1 block text-xs font-semibold text-slate-500">
               ผู้อำนวยการโรงเรียน
             </label>
             <input
@@ -2225,8 +2656,9 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
               onChange={(e) =>
                 setSettings({ ...settings, director: e.target.value })
               }
-              className="w-full p-2 border rounded-lg text-sm bg-slate-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
             />
+          </div>
           </div>
         </div>
       </div>
@@ -2329,10 +2761,13 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
                               // 🚀 แก้ปัญหา Date Format ไม่ตรงกัน ทำให้ยอดเงินและช่องคะแนนขึ้นครบ!
                               const record = approvedData.find(
                                 (i) =>
-                                  i.zoneId === zone.id &&
+                                  Number(i.zoneId) === zone.id &&
                                   formatDateKey(i.date) === date
                               );
                               const score = record ? record.score : "-";
+                              const cellKey = record
+                                ? `${record.id}-${formatDateKey(record.date)}`
+                                : "";
                               if (score !== "-") {
                                 total += Number(score);
                                 hasData = true;
@@ -2340,9 +2775,48 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
                               return (
                                 <td
                                   key={date}
-                                  className="border border-black py-1.5 px-2 text-center"
+                                  className={`border border-black px-1 py-1.5 text-center transition-colors ${
+                                    savedCell === cellKey
+                                      ? "bg-emerald-100"
+                                      : "bg-white"
+                                  }`}
                                 >
-                                  {score}
+                                  {record ? (
+                                    <>
+                                      <span className="print-only hidden">
+                                        {score}
+                                      </span>
+                                      <div className="screen-only relative flex items-center justify-center gap-1">
+                                        <select
+                                          aria-label={`แก้คะแนน ${zone.name} วันที่ ${date}`}
+                                          title="แก้คะแนนแล้วบันทึกลงปฏิทินอัตโนมัติ"
+                                          value={Number(score)}
+                                          disabled={savingCell === cellKey}
+                                          onChange={(event) =>
+                                            handleInlineScoreChange(
+                                              record,
+                                              event.target.value
+                                            )
+                                          }
+                                          className="w-12 cursor-pointer rounded-lg border border-slate-300 bg-white px-1 py-1 text-center font-sans text-sm font-bold text-slate-800 outline-none hover:border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:cursor-wait disabled:opacity-50"
+                                        >
+                                          {[0, 1, 2, 3].map((value) => (
+                                            <option key={value} value={value}>
+                                              {value}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        {savingCell === cellKey && (
+                                          <Save className="h-3.5 w-3.5 animate-pulse text-amber-600" />
+                                        )}
+                                        {savedCell === cellKey && (
+                                          <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
+                                        )}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    "-"
+                                  )}
                                 </td>
                               );
                             })}
@@ -2358,7 +2832,7 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
 
                 <div
                   style={{ pageBreakInside: "avoid" }}
-                  className="mt-10 w-full flex justify-between gap-4 text-center"
+                  className="avoid-break mt-10 w-full flex justify-between gap-4 text-center"
                 >
                   <div className="flex flex-col items-center flex-1">
                     <div className="mb-4">
@@ -2408,7 +2882,7 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
                 </div>
 
                 <div
-                  className="mt-12 pt-4"
+                  className="page-break-before mt-12 pt-4"
                   style={{ pageBreakBefore: "always" }}
                 >
                   <h2 className="text-[18pt] font-bold pb-2 mb-4">
@@ -2422,12 +2896,14 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
                       </p>
                     ) : null}
                     {weeklyFilteredData.map((item) => {
-                      const zone = ZONES.find((z) => z.id === item.zoneId);
+                      const zone = ZONES.find(
+                        (z) => z.id === Number(item.zoneId)
+                      );
                       return (
                         <div
                           key={item.id}
                           style={{ pageBreakInside: "avoid" }}
-                          className="mb-2"
+                          className="photo-record mb-2"
                         >
                           <div className="flex justify-between pb-1 mb-1 font-bold text-[15pt]">
                             <span>
@@ -2543,7 +3019,7 @@ function ReportView({ inspections, schoolLogo, setSchoolLogo }) {
 
                 <div
                   style={{ pageBreakInside: "avoid" }}
-                  className="mt-6 w-full flex justify-between gap-4"
+                  className="avoid-break mt-6 w-full flex justify-between gap-4"
                 >
                   {/* 🚀 กล่องสรุปผล */}
                   <div className="w-[45%] text-[13pt] print:text-[12pt]">
