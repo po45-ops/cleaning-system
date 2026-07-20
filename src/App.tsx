@@ -359,6 +359,17 @@ export default function App() {
                 {user.role === "admin" ? "ตรวจอนุมัติ" : "สถานะงาน"}
               </button>
 
+              <button
+                onClick={() => setActiveTab("calendar")}
+                className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
+                  activeTab === "calendar"
+                    ? "bg-white text-emerald-700 shadow-sm"
+                    : "text-emerald-50 hover:bg-emerald-600/60"
+                }`}
+              >
+                <CalendarDays className="w-4 h-4" /> ปฏิทิน
+              </button>
+
               {user.role === "admin" && (
                 <>
                   <button
@@ -479,6 +490,9 @@ export default function App() {
                 }}
               />
             )}
+            {activeTab === "calendar" && (
+              <InspectionCalendar inspections={inspections} />
+            )}
             {user.role === "admin" && activeTab === "report" && (
               <ReportView
                 inspections={inspections}
@@ -524,6 +538,18 @@ export default function App() {
           <span className="text-[10px]">
             {user.role === "admin" ? "อนุมัติ" : "สถานะ"}
           </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("calendar")}
+          className={`flex flex-col items-center p-2 ${
+            activeTab === "calendar"
+              ? "text-emerald-600 font-bold"
+              : "text-slate-400"
+          }`}
+        >
+          <CalendarDays className="w-6 h-6 mb-1" />
+          <span className="text-[10px]">ปฏิทิน</span>
         </button>
 
         {user.role === "admin" && (
@@ -991,6 +1017,442 @@ function StudentForm({ onSave }) {
           {isSubmitting ? "กำลังดำเนินการ..." : "บันทึกและส่งข้อมูล"}
         </button>
       </form>
+    </div>
+  );
+}
+
+function InspectionCalendar({ inspections }) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  const toDateKey = (date) => {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const todayKey = toDateKey(now);
+  const [viewMonth, setViewMonth] = useState(
+    new Date(now.getFullYear(), now.getMonth(), 1)
+  );
+  const [selectedDate, setSelectedDate] = useState(todayKey);
+
+  const recordsByDate = inspections.reduce((acc, item) => {
+    const key = formatDateKey(item.date);
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(item);
+    return acc;
+  }, {});
+
+  const getDayInfo = (date) => {
+    const key = toDateKey(date);
+    const dayOfWeek = date.getDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    const isFuture = date > now;
+    const records = recordsByDate[key] || [];
+    const checkedZoneIds = new Set(
+      records
+        .map((item) => Number(item.zoneId))
+        .filter((zoneId) => ZONES.some((zone) => zone.id === zoneId))
+    );
+    const checkedCount = checkedZoneIds.size;
+
+    let status = "missing";
+    if (isWeekend) status = "weekend";
+    else if (isFuture) status = "future";
+    else if (checkedCount >= ZONES.length) status = "complete";
+    else if (checkedCount > 0) status = "partial";
+
+    return {
+      key,
+      records,
+      checkedCount,
+      isWeekend,
+      isFuture,
+      status,
+    };
+  };
+
+  const year = viewMonth.getFullYear();
+  const month = viewMonth.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const leadingEmptyDays = new Date(year, month, 1).getDay();
+  const calendarCells = [
+    ...Array.from({ length: leadingEmptyDays }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
+  ];
+  while (calendarCells.length % 7 !== 0) calendarCells.push(null);
+
+  const monthSummary = Array.from({ length: daysInMonth }, (_, index) => {
+    const date = new Date(year, month, index + 1);
+    return getDayInfo(date);
+  }).reduce(
+    (summary, day) => {
+      if (day.isWeekend || day.isFuture) return summary;
+      summary.scheduled += 1;
+      summary.checkedZones += day.checkedCount;
+      if (day.status === "complete") summary.complete += 1;
+      if (day.status === "partial") summary.partial += 1;
+      if (day.status === "missing") summary.missing += 1;
+      return summary;
+    },
+    { scheduled: 0, complete: 0, partial: 0, missing: 0, checkedZones: 0 }
+  );
+
+  const coveragePercent = monthSummary.scheduled
+    ? Math.round(
+        (monthSummary.checkedZones /
+          (monthSummary.scheduled * ZONES.length)) *
+          100
+      )
+    : 0;
+
+  const selectedDateObject = new Date(`${selectedDate}T00:00:00`);
+  const selectedInfo = getDayInfo(selectedDateObject);
+  const selectedDateLabel = new Intl.DateTimeFormat("th-TH", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(selectedDateObject);
+  const monthLabel = new Intl.DateTimeFormat("th-TH", {
+    month: "long",
+    year: "numeric",
+  }).format(viewMonth);
+
+  const changeMonth = (offset) => {
+    setViewMonth(new Date(year, month + offset, 1));
+  };
+
+  const goToCurrentMonth = () => {
+    setViewMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+    setSelectedDate(todayKey);
+  };
+
+  const statusStyles = {
+    complete: {
+      cell: "bg-emerald-50 border-emerald-300 hover:bg-emerald-100",
+      badge: "bg-emerald-600 text-white",
+      label: `ครบ ${ZONES.length}/${ZONES.length}`,
+    },
+    partial: {
+      cell: "bg-amber-50 border-amber-300 hover:bg-amber-100",
+      badge: "bg-amber-500 text-white",
+      label: `${selectedInfo.checkedCount}/${ZONES.length} เขต`,
+    },
+    missing: {
+      cell: "bg-red-50 border-red-200 hover:bg-red-100",
+      badge: "bg-red-500 text-white",
+      label: "ยังไม่ตรวจ",
+    },
+    future: {
+      cell: "bg-white border-slate-200 hover:bg-slate-50",
+      badge: "bg-slate-100 text-slate-500",
+      label: "รอตรวจ",
+    },
+    weekend: {
+      cell: "bg-slate-100 border-slate-200 text-slate-400",
+      badge: "bg-slate-200 text-slate-500",
+      label: "วันหยุด",
+    },
+  };
+
+  return (
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-600 to-teal-700 text-white shadow-lg">
+        <div className="p-5 md:p-7">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-11 h-11 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center">
+                  <CalendarDays className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold">ปฏิทินการตรวจเวร</h2>
+                  <p className="text-emerald-100 text-sm">
+                    ตรวจสอบวันที่และเขตพื้นที่ที่ยังบันทึกไม่ครบ
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="self-start md:self-auto rounded-full bg-white/15 border border-white/20 px-4 py-2 text-sm font-bold">
+              ตรวจเฉพาะวันจันทร์–วันศุกร์
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+            <div className="rounded-xl bg-white/12 border border-white/15 p-4">
+              <p className="text-xs text-emerald-100">ตรวจครบทุกเขต</p>
+              <p className="text-2xl font-bold mt-1">
+                {monthSummary.complete} วัน
+              </p>
+            </div>
+            <div className="rounded-xl bg-white/12 border border-white/15 p-4">
+              <p className="text-xs text-emerald-100">ตรวจบางส่วน</p>
+              <p className="text-2xl font-bold mt-1">
+                {monthSummary.partial} วัน
+              </p>
+            </div>
+            <div className="rounded-xl bg-white/12 border border-white/15 p-4">
+              <p className="text-xs text-emerald-100">ยังไม่ได้ตรวจ</p>
+              <p className="text-2xl font-bold mt-1">
+                {monthSummary.missing} วัน
+              </p>
+            </div>
+            <div className="rounded-xl bg-white text-emerald-700 p-4 shadow-sm">
+              <p className="text-xs text-emerald-600">ความครอบคลุมรายเดือน</p>
+              <div className="flex items-end justify-between gap-3 mt-1">
+                <p className="text-2xl font-bold">{coveragePercent}%</p>
+                <p className="text-[10px] text-slate-500 text-right">
+                  {monthSummary.checkedZones}/
+                  {monthSummary.scheduled * ZONES.length} เขต
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)] gap-5 items-start">
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-4 md:p-5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => changeMonth(-1)}
+                className="w-10 h-10 rounded-xl border border-slate-200 hover:bg-slate-100 font-bold text-lg"
+                aria-label="เดือนก่อนหน้า"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                onClick={() => changeMonth(1)}
+                className="w-10 h-10 rounded-xl border border-slate-200 hover:bg-slate-100 font-bold text-lg"
+                aria-label="เดือนถัดไป"
+              >
+                ›
+              </button>
+              <h3 className="font-bold text-lg md:text-xl ml-1 capitalize">
+                {monthLabel}
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={goToCurrentMonth}
+              className="px-4 py-2 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-sm font-bold border border-emerald-200"
+            >
+              เดือนปัจจุบัน
+            </button>
+          </div>
+
+          <div className="p-2 sm:p-4">
+            <div className="grid grid-cols-7 mb-2">
+              {["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."].map(
+                (day, index) => (
+                  <div
+                    key={day}
+                    className={`py-2 text-center text-xs sm:text-sm font-bold ${
+                      index === 0 || index === 6
+                        ? "text-rose-400"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {day}
+                  </div>
+                )
+              )}
+            </div>
+
+            <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+              {calendarCells.map((day, index) => {
+                if (!day)
+                  return (
+                    <div
+                      key={`empty-${index}`}
+                      className="min-h-[72px] sm:min-h-[104px]"
+                    />
+                  );
+
+                const date = new Date(year, month, day);
+                const info = getDayInfo(date);
+                const style = statusStyles[info.status];
+                const isToday = info.key === todayKey;
+                const isSelected = info.key === selectedDate;
+                const cellLabel =
+                  info.status === "complete"
+                    ? `ครบ ${ZONES.length}/${ZONES.length}`
+                    : info.status === "partial"
+                    ? `${info.checkedCount}/${ZONES.length} เขต`
+                    : style.label;
+
+                return (
+                  <button
+                    type="button"
+                    key={info.key}
+                    onClick={() => setSelectedDate(info.key)}
+                    className={`relative min-h-[72px] sm:min-h-[104px] rounded-xl border p-1.5 sm:p-2 text-left transition-all ${
+                      style.cell
+                    } ${
+                      isSelected
+                        ? "ring-2 ring-emerald-600 ring-offset-1 shadow-md"
+                        : ""
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <span
+                        className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${
+                          isToday
+                            ? "bg-emerald-700 text-white"
+                            : "text-slate-700"
+                        }`}
+                      >
+                        {day}
+                      </span>
+                      {info.status === "complete" && (
+                        <CheckCircle className="hidden sm:block w-4 h-4 text-emerald-600" />
+                      )}
+                    </div>
+                    <span
+                      className={`absolute left-1.5 right-1.5 bottom-1.5 rounded-md px-1 py-1 text-[9px] sm:text-[11px] text-center font-bold truncate ${style.badge}`}
+                    >
+                      {cellLabel}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4 pt-4 border-t text-xs text-slate-600">
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-emerald-500" /> ตรวจครบ
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-amber-400" /> ตรวจบางส่วน
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-red-400" /> ยังไม่ได้ตรวจ
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-slate-300" /> วันหยุด/วันในอนาคต
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <aside className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden xl:sticky xl:top-24">
+          <div className="p-5 border-b border-slate-200">
+            <p className="text-xs font-bold text-emerald-600 mb-1">
+              รายละเอียดประจำวันที่เลือก
+            </p>
+            <h3 className="text-lg font-bold text-slate-800">
+              {selectedDateLabel}
+            </h3>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  statusStyles[selectedInfo.status].badge
+                }`}
+              >
+                {selectedInfo.isWeekend
+                  ? "ไม่มีการตรวจในวันหยุด"
+                  : selectedInfo.isFuture
+                  ? "ยังไม่ถึงวันตรวจ"
+                  : selectedInfo.status === "complete"
+                  ? "ตรวจครบทุกเขต"
+                  : selectedInfo.status === "partial"
+                  ? `ตรวจแล้ว ${selectedInfo.checkedCount}/${ZONES.length} เขต`
+                  : "ยังไม่มีการตรวจ"}
+              </span>
+            </div>
+          </div>
+
+          {selectedInfo.isWeekend ? (
+            <div className="p-8 text-center text-slate-500">
+              <Clock className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+              <p className="font-bold">วันเสาร์–อาทิตย์เป็นวันหยุด</p>
+              <p className="text-sm mt-1">ระบบไม่นับเป็นวันที่ต้องตรวจเวร</p>
+            </div>
+          ) : selectedInfo.isFuture ? (
+            <div className="p-8 text-center text-slate-500">
+              <CalendarDays className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+              <p className="font-bold">ยังไม่ถึงกำหนดตรวจ</p>
+              <p className="text-sm mt-1">กลับมาตรวจสอบได้เมื่อถึงวันดังกล่าว</p>
+            </div>
+          ) : (
+            <div className="p-4 max-h-[540px] overflow-y-auto">
+              <div className="space-y-2">
+                {ZONES.map((zone) => {
+                  const record = selectedInfo.records.find(
+                    (item) => Number(item.zoneId) === zone.id
+                  );
+                  const recordStatus = record
+                    ? record.status === "approved"
+                      ? {
+                          label: "อนุมัติแล้ว",
+                          className: "bg-emerald-100 text-emerald-700",
+                        }
+                      : record.status === "rejected"
+                      ? {
+                          label: "ส่งกลับแก้ไข",
+                          className: "bg-red-100 text-red-700",
+                        }
+                      : {
+                          label: "รออนุมัติ",
+                          className: "bg-amber-100 text-amber-700",
+                        }
+                    : null;
+
+                  return (
+                    <div
+                      key={zone.id}
+                      className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${
+                        record
+                          ? "border-emerald-200 bg-emerald-50/60"
+                          : "border-red-100 bg-red-50/60"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+                            record
+                              ? "bg-emerald-600 text-white"
+                              : "bg-white text-red-400 border border-red-200"
+                          }`}
+                        >
+                          {record ? (
+                            <CheckCircle className="w-5 h-5" />
+                          ) : (
+                            <AlertCircle className="w-5 h-5" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm text-slate-800">
+                            {zone.name} · {zone.class}
+                          </p>
+                          <p className="text-[11px] text-slate-500 truncate">
+                            {record
+                              ? `บันทึกแล้ว · ${record.score}/3 คะแนน`
+                              : "ยังไม่มีข้อมูลการตรวจ"}
+                          </p>
+                        </div>
+                      </div>
+                      {recordStatus && (
+                        <span
+                          className={`rounded-full px-2 py-1 text-[10px] font-bold whitespace-nowrap ${recordStatus.className}`}
+                        >
+                          {recordStatus.label}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
