@@ -162,6 +162,54 @@ const formatDateKey = (dateStr) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+const getInspectionStatusPriority = (status) => {
+  if (status === "approved") return 3;
+  if (status === "pending") return 2;
+  if (status === "rejected") return 1;
+  return 0;
+};
+
+const pickPreferredInspection = (current, candidate) => {
+  if (!current) return candidate;
+
+  const currentPriority = getInspectionStatusPriority(current.status);
+  const candidatePriority = getInspectionStatusPriority(candidate.status);
+  if (candidatePriority !== currentPriority) {
+    return candidatePriority > currentPriority ? candidate : current;
+  }
+
+  const currentId = Number(current.id) || 0;
+  const candidateId = Number(candidate.id) || 0;
+  return candidateId >= currentId ? candidate : current;
+};
+
+// ป้องกันข้อมูลซ้ำทั้งกรณี ID ซ้ำ และกรณีเขตเดิมถูกส่งซ้ำในวันเดียวกัน
+const deduplicateInspections = (items) => {
+  const recordsById = new Map();
+
+  items.forEach((item, index) => {
+    const id = String(item.id || "").trim();
+    const key = id ? `id:${id}` : `row:${index}`;
+    recordsById.set(
+      key,
+      pickPreferredInspection(recordsById.get(key), item)
+    );
+  });
+
+  const recordsByDateAndZone = new Map();
+  Array.from(recordsById.values()).forEach((item, index) => {
+    const date = formatDateKey(item.date);
+    const zoneId = Number(item.zoneId);
+    const key = date && zoneId ? `${date}|${zoneId}` : `record:${index}`;
+    recordsByDateAndZone.set(
+      key,
+      pickPreferredInspection(recordsByDateAndZone.get(key), item)
+    );
+  });
+
+  return Array.from(recordsByDateAndZone.values());
+};
+
 const compressImage = (file) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -241,10 +289,13 @@ export default function App() {
     if (!user) return;
     setIsLoadingData(true);
     try {
-      const res = await fetch(SCRIPT_URL);
+      const res = await fetch(`${SCRIPT_URL}?refresh=${Date.now()}`);
       const json = await res.json();
       if (json.status === "success") {
-        setInspections(json.data.reverse());
+        const uniqueInspections = deduplicateInspections(
+          Array.isArray(json.data) ? json.data : []
+        );
+        setInspections(uniqueInspections.reverse());
       }
     } catch (err) {
       console.error("โหลดข้อมูลล้มเหลว:", err);
@@ -417,7 +468,12 @@ export default function App() {
           <>
             {activeTab === "student" && (
               <StudentForm
-                onSave={(data) => setInspections([data, ...inspections])}
+                inspections={inspections}
+                onSave={(data) =>
+                  setInspections(
+                    deduplicateInspections([data, ...inspections])
+                  )
+                }
               />
             )}
             {activeTab === "teacher" && (
@@ -447,6 +503,7 @@ export default function App() {
                           item.id === id ? { ...item, status } : item
                         )
                       );
+                      await fetchFromSheets();
                       return true;
                     } else {
                       alert("เกิดข้อผิดพลาดจากเซิร์ฟเวอร์: " + json.message);
@@ -768,7 +825,7 @@ function LoginScreen({ onLogin, schoolLogo, studentCredentials }) {
   );
 }
 
-function StudentForm({ onSave }) {
+function StudentForm({ onSave, inspections }) {
   const [formData, setFormData] = useState({
     date: getDefaultWeekday(),
     zoneId: "",
@@ -778,6 +835,15 @@ function StudentForm({ onSave }) {
   const [images, setImages] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+
+  const hasExistingInspection = (zoneId, date = formData.date) => {
+    if (!zoneId || !date) return false;
+    return inspections.some(
+      (item) =>
+        formatDateKey(item.date) === date &&
+        Number(item.zoneId) === Number(zoneId)
+    );
+  };
 
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files);
@@ -815,6 +881,11 @@ function StudentForm({ onSave }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.zoneId) return alert("กรุณาเลือกเขตพื้นที่");
+    if (hasExistingInspection(formData.zoneId)) {
+      return alert(
+        "เขตพื้นที่นี้มีการบันทึกข้อมูลในวันที่เลือกแล้ว กรุณาตรวจสอบที่เมนูสถานะงานหรือปฏิทิน"
+      );
+    }
     if (formData.score === null) return alert("กรุณาให้คะแนน");
     if (images.length !== 3) return alert("กรุณาแนบรูปภาพให้ครบ 3 รูป");
 
@@ -897,8 +968,13 @@ function StudentForm({ onSave }) {
             >
               <option value="">-- เลือกเขตพื้นที่ --</option>
               {ZONES.map((z) => (
-                <option key={z.id} value={z.id}>
+                <option
+                  key={z.id}
+                  value={z.id}
+                  disabled={hasExistingInspection(z.id)}
+                >
                   {z.name} ({z.class})
+                  {hasExistingInspection(z.id) ? " — บันทึกแล้ว" : ""}
                 </option>
               ))}
             </select>
