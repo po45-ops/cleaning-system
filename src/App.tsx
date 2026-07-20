@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 import html2pdf from "html2pdf.js";
 import {
   AlignmentType,
@@ -203,6 +203,14 @@ const pickPreferredInspection = (current, candidate) => {
   return candidateId >= currentId ? candidate : current;
 };
 
+// หากเขตเดิมส่งซ้ำในวันเดียวกัน ให้ข้อมูลที่มี ID ใหม่กว่าแทนข้อมูลเดิมเสมอ
+const pickLatestInspection = (current, candidate) => {
+  if (!current) return candidate;
+  const currentId = Number(current.id) || 0;
+  const candidateId = Number(candidate.id) || 0;
+  return candidateId >= currentId ? candidate : current;
+};
+
 // ป้องกันข้อมูลซ้ำทั้งกรณี ID ซ้ำ และกรณีเขตเดิมถูกส่งซ้ำในวันเดียวกัน
 const deduplicateInspections = (items) => {
   const recordsById = new Map();
@@ -223,7 +231,7 @@ const deduplicateInspections = (items) => {
     const key = date && zoneId ? `${date}|${zoneId}` : `record:${index}`;
     recordsByDateAndZone.set(
       key,
-      pickPreferredInspection(recordsByDateAndZone.get(key), item)
+      pickLatestInspection(recordsByDateAndZone.get(key), item)
     );
   });
 
@@ -362,10 +370,12 @@ export default function App() {
       const payload = {
         action: "update",
         id: updatedItem.id,
+        zoneId: Number(updatedItem.zoneId),
         score: Number(updatedItem.score),
         notes: updatedItem.notes || "",
         status: updatedItem.status,
         date: updatedItem.date,
+        images: updatedItem.images || [],
       };
       const res = await fetch(SCRIPT_URL, {
         method: "POST",
@@ -387,6 +397,39 @@ export default function App() {
       await fetchFromSheets();
       return true;
     } catch (e) {
+      alert("เชื่อมต่อฐานข้อมูลล้มเหลว กรุณาลองใหม่อีกครั้ง");
+      return false;
+    }
+  };
+
+  const createInspectionRecord = async (newItem) => {
+    const payload = {
+      action: "create",
+      id: newItem.id || Date.now().toString(),
+      date: formatDateKey(newItem.date),
+      zoneId: Number(newItem.zoneId),
+      score: Number(newItem.score),
+      notes: newItem.notes || "บันทึกโดยแอดมินจากตารางรายงาน",
+      status: newItem.status || "approved",
+      images: newItem.images || [],
+    };
+    try {
+      const response = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json();
+      if (result.status !== "success") {
+        alert("เกิดข้อผิดพลาดจากเซิร์ฟเวอร์: " + result.message);
+        return false;
+      }
+      setInspections((current) =>
+        deduplicateInspections([payload, ...current])
+      );
+      await fetchFromSheets();
+      return payload;
+    } catch (error) {
       alert("เชื่อมต่อฐานข้อมูลล้มเหลว กรุณาลองใหม่อีกครั้ง");
       return false;
     }
@@ -557,6 +600,7 @@ export default function App() {
                 schoolLogo={schoolLogo}
                 setSchoolLogo={setSchoolLogo}
                 updateInspection={updateInspectionRecord}
+                createInspection={createInspectionRecord}
               />
             )}
             {user.role === "admin" && activeTab === "users" && (
@@ -846,6 +890,7 @@ function StudentForm({ onSave, inspections }) {
         Number(item.zoneId) === Number(zoneId)
     );
   };
+  const isReplacingExisting = hasExistingInspection(formData.zoneId);
 
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files);
@@ -883,11 +928,6 @@ function StudentForm({ onSave, inspections }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.zoneId) return alert("กรุณาเลือกเขตพื้นที่");
-    if (hasExistingInspection(formData.zoneId)) {
-      return alert(
-        "เขตพื้นที่นี้มีการบันทึกข้อมูลในวันที่เลือกแล้ว กรุณาตรวจสอบที่เมนูสถานะงานหรือปฏิทิน"
-      );
-    }
     if (formData.score === null) return alert("กรุณาให้คะแนน");
     if (images.length !== 3) return alert("กรุณาแนบรูปภาพให้ครบ 3 รูป");
 
@@ -913,7 +953,11 @@ function StudentForm({ onSave, inspections }) {
 
       if (result.status === "success") {
         onSave(payload);
-        setMessage("บันทึกข้อมูลลงฐานข้อมูลสำเร็จ! รอครูผู้ดูแลยืนยัน");
+        setMessage(
+          isReplacingExisting
+            ? "บันทึกข้อมูลล่าสุดแล้ว รายการใหม่นี้จะแทนรายการเดิมของวันและเขตเดียวกัน"
+            : "บันทึกข้อมูลลงฐานข้อมูลสำเร็จ! รอครูผู้ดูแลยืนยัน"
+        );
         setFormData({ ...formData, zoneId: "", score: null, notes: "" });
         setImages([]);
         setTimeout(() => setMessage(""), 4000);
@@ -953,6 +997,7 @@ function StudentForm({ onSave, inspections }) {
               className="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
               value={formData.date}
               onChange={handleDateChange}
+              max={formatDateKey(new Date())}
               required
             />
           </div>
@@ -970,13 +1015,9 @@ function StudentForm({ onSave, inspections }) {
             >
               <option value="">-- เลือกเขตพื้นที่ --</option>
               {ZONES.map((z) => (
-                <option
-                  key={z.id}
-                  value={z.id}
-                  disabled={hasExistingInspection(z.id)}
-                >
+                <option key={z.id} value={z.id}>
                   {z.name} ({z.class})
-                  {hasExistingInspection(z.id) ? " — บันทึกแล้ว" : ""}
+                  {hasExistingInspection(z.id) ? " — ส่งใหม่แทนรายการเดิม" : ""}
                 </option>
               ))}
             </select>
@@ -984,9 +1025,17 @@ function StudentForm({ onSave, inspections }) {
         </div>
 
         {formData.zoneId && (
-          <div className="bg-slate-50 p-3 rounded-lg border text-sm text-slate-600">
-            <span className="font-semibold text-emerald-700">รายละเอียด:</span>{" "}
-            {ZONES.find((z) => z.id === parseInt(formData.zoneId))?.desc}
+          <div className="space-y-2">
+            {isReplacingExisting && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <span className="font-bold">พบรายการเดิม:</span> เมื่อกดบันทึก
+                ระบบจะถือข้อมูลและรูปภาพชุดใหม่นี้เป็นรายการล่าสุดแทนชุดเดิม
+              </div>
+            )}
+            <div className="bg-slate-50 p-3 rounded-lg border text-sm text-slate-600">
+              <span className="font-semibold text-emerald-700">รายละเอียด:</span>{" "}
+              {ZONES.find((z) => z.id === parseInt(formData.zoneId))?.desc}
+            </div>
           </div>
         )}
 
@@ -1871,7 +1920,25 @@ function ReportView({
   schoolLogo,
   setSchoolLogo,
   updateInspection,
+  createInspection,
 }) {
+  const normalizeToMonday = (dateValue) => {
+    const date = new Date(dateValue);
+    if (isNaN(date.getTime())) return formatDateKey(new Date());
+    date.setHours(12, 0, 0, 0);
+    const day = date.getDay();
+    date.setDate(date.getDate() - (day === 0 ? 6 : day - 1));
+    return formatDateKey(date);
+  };
+
+  const inferredSemesterStart = (() => {
+    const dates = inspections
+      .map((item) => new Date(item.date))
+      .filter((date) => !isNaN(date.getTime()))
+      .sort((a, b) => a.getTime() - b.getTime());
+    return normalizeToMonday(dates[0] || new Date());
+  })();
+
   const [selectedReportWeek, setSelectedReportWeek] = useState(1);
   const [isPrinting, setIsPrinting] = useState(false);
   const [exporting, setExporting] = useState("");
@@ -1883,8 +1950,19 @@ function ReportView({
     const saved = localStorage.getItem("cleaning_report_settings");
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (!parsed.term) parsed.term = "2";
-      if (!parsed.year) parsed.year = "2568";
+      if (!parsed.semesterStart) {
+        parsed.semesterStart = inferredSemesterStart;
+        const inferredDate = new Date(`${inferredSemesterStart}T12:00:00`);
+        parsed.term =
+          inferredDate.getMonth() >= 4 && inferredDate.getMonth() <= 9
+            ? "1"
+            : "2";
+        parsed.year = String(inferredDate.getFullYear() + 543);
+      } else {
+        parsed.semesterStart = normalizeToMonday(parsed.semesterStart);
+      }
+      if (!parsed.term) parsed.term = "1";
+      if (!parsed.year) parsed.year = String(new Date().getFullYear() + 543);
       if (!parsed.headStudentAffairs)
         parsed.headStudentAffairs = parsed.teacher || "";
       return parsed;
@@ -1894,8 +1972,9 @@ function ReportView({
       teacher: "",
       director: "",
       headStudentAffairs: "",
-      term: "2",
-      year: "2568",
+      term: "1",
+      year: String(new Date().getFullYear() + 543),
+      semesterStart: inferredSemesterStart,
     };
   });
 
@@ -1907,18 +1986,8 @@ function ReportView({
   const WEEKS = Array.from({ length: 21 }, (_, i) => i + 1);
 
   const getWeekNumFromDate = (dateStr) => {
-    if (!dateStr || approvedData.length === 0) return 1;
-    const dates = approvedData
-      .map((d) => new Date(d.date).getTime())
-      .filter((t) => !isNaN(t));
-    if (dates.length === 0) return 1;
-
-    const minDate = new Date(Math.min(...dates));
-    const day = minDate.getDay();
-    const diff = minDate.getDate() - day + (day === 0 ? -6 : 1);
-
-    const semesterStartMonday = new Date(minDate.setDate(diff));
-    semesterStartMonday.setHours(12, 0, 0, 0);
+    if (!dateStr || !settings.semesterStart) return 0;
+    const semesterStartMonday = new Date(`${settings.semesterStart}T12:00:00`);
 
     const currentRecordDate = new Date(dateStr);
     currentRecordDate.setHours(12, 0, 0, 0);
@@ -1928,22 +1997,11 @@ function ReportView({
     const daysDiff = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
 
     const weekNo = Math.floor(daysDiff / 7) + 1;
-    return weekNo >= 1 && weekNo <= 21 ? weekNo : weekNo < 1 ? 1 : 21;
+    return weekNo;
   };
 
   const getWeekDatesForWeek = (weekNo) => {
-    let baseDate = new Date();
-    if (approvedData.length > 0) {
-      const dates = approvedData
-        .map((d) => new Date(d.date).getTime())
-        .filter((t) => !isNaN(t));
-      baseDate = new Date(Math.min(...dates));
-    }
-
-    const day = baseDate.getDay();
-    const diff = baseDate.getDate() - day + (day === 0 ? -6 : 1);
-
-    const baseMonday = new Date(baseDate.setDate(diff));
+    const baseMonday = new Date(`${settings.semesterStart}T12:00:00`);
     baseMonday.setHours(12, 0, 0, 0);
 
     baseMonday.setDate(baseMonday.getDate() + (weekNo - 1) * 7);
@@ -1959,6 +2017,14 @@ function ReportView({
     }
     return days;
   };
+
+  const currentAcademicWeek = getWeekNumFromDate(new Date());
+
+  useEffect(() => {
+    if (currentAcademicWeek >= 1 && currentAcademicWeek <= WEEKS.length) {
+      setSelectedReportWeek(currentAcademicWeek);
+    }
+  }, [settings.semesterStart]);
 
   const currentWeekDates = getWeekDatesForWeek(selectedReportWeek);
 
@@ -2110,6 +2176,61 @@ function ReportView({
         fitToHeight: 0,
         paperSize: 9,
       };
+
+      const thinBorder = {
+        top: { style: "thin", color: { rgb: "475569" } },
+        bottom: { style: "thin", color: { rgb: "475569" } },
+        left: { style: "thin", color: { rgb: "475569" } },
+        right: { style: "thin", color: { rgb: "475569" } },
+      };
+      const styleSheet = (
+        sheet,
+        rows,
+        { titleRows = [], headerRows = [], tableStartRow = 0, totalRows = [] } = {}
+      ) => {
+        const range = XLSX.utils.decode_range(sheet["!ref"]);
+        for (let row = range.s.r; row <= range.e.r; row += 1) {
+          for (let column = range.s.c; column <= range.e.c; column += 1) {
+            const address = XLSX.utils.encode_cell({ r: row, c: column });
+            if (!sheet[address]) sheet[address] = { t: "s", v: "" };
+            const isTitle = titleRows.includes(row);
+            const isHeader = headerRows.includes(row);
+            const isTotal = totalRows.includes(row);
+            sheet[address].s = {
+              font: {
+                name: "TH Sarabun PSK",
+                sz: isTitle ? 20 : 16,
+                bold: isTitle || isHeader || isTotal,
+                color: { rgb: "0F172A" },
+              },
+              alignment: {
+                horizontal: "center",
+                vertical: "center",
+                wrapText: true,
+              },
+              border: row >= tableStartRow ? thinBorder : undefined,
+              fill: isHeader
+                ? { patternType: "solid", fgColor: { rgb: "D1FAE5" } }
+                : isTotal
+                ? { patternType: "solid", fgColor: { rgb: "F1F5F9" } }
+                : undefined,
+            };
+          }
+        }
+        sheet["!rows"] = rows.map((_, row) => ({
+          hpt: titleRows.includes(row) ? 30 : headerRows.includes(row) ? 28 : 25,
+        }));
+      };
+
+      styleSheet(summarySheet, summaryRows, {
+        titleRows: reportMode === "weekly" ? [0, 1] : [0],
+        headerRows: reportMode === "weekly" ? [2] : [1],
+        tableStartRow: reportMode === "weekly" ? 2 : 1,
+        totalRows:
+          reportMode === "semester"
+            ? [summaryRows.length - 2, summaryRows.length - 1]
+            : [],
+      });
       XLSX.utils.book_append_sheet(workbook, summarySheet, "สรุปผล");
 
       const detailRows = [
@@ -2158,6 +2279,24 @@ function ReportView({
         { wch: 35 },
         { wch: 35 },
       ];
+      detailSheet["!margins"] = {
+        left: 0.25,
+        right: 0.25,
+        top: 0.4,
+        bottom: 0.4,
+        header: 0.2,
+        footer: 0.2,
+      };
+      detailSheet["!pageSetup"] = {
+        orientation: "landscape",
+        fitToWidth: 1,
+        fitToHeight: 0,
+        paperSize: 9,
+      };
+      styleSheet(detailSheet, detailRows, {
+        headerRows: [0],
+        tableStartRow: 0,
+      });
       XLSX.utils.book_append_sheet(workbook, detailSheet, "ข้อมูลรายวัน");
       XLSX.writeFile(workbook, reportFileName("xlsx"), {
         compression: true,
@@ -2173,6 +2312,7 @@ function ReportView({
   ) =>
     new TableCell({
       verticalAlign: VerticalAlign.CENTER,
+      margins: { top: 80, bottom: 80, left: 80, right: 80 },
       shading: { fill, type: ShadingType.CLEAR },
       borders: {
         top: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
@@ -2188,8 +2328,8 @@ function ReportView({
             new TextRun({
               text: String(value ?? ""),
               bold,
-              font: "TH Sarabun New",
-              size: 28,
+              font: "TH Sarabun PSK",
+              size: 30,
             }),
           ],
         }),
@@ -2268,10 +2408,7 @@ function ReportView({
                       (reportMode === "semester" &&
                         rowIndex >= dataRows.length - 2),
                     fill: rowIndex % 2 === 1 ? "F8FAFC" : "FFFFFF",
-                    align:
-                      columnIndex === 0 && reportMode === "weekly"
-                        ? AlignmentType.LEFT
-                        : AlignmentType.CENTER,
+                    align: AlignmentType.CENTER,
                   })
                 ),
               })
@@ -2287,7 +2424,7 @@ function ReportView({
             new TextRun({
               text: title,
               bold: true,
-              font: "TH Sarabun New",
+              font: "TH Sarabun PSK",
               size: 38,
             }),
           ],
@@ -2299,7 +2436,7 @@ function ReportView({
             new TextRun({
               text: "โรงเรียนไตรธารวิทยา",
               bold: true,
-              font: "TH Sarabun New",
+              font: "TH Sarabun PSK",
               size: 32,
             }),
           ],
@@ -2314,8 +2451,8 @@ function ReportView({
                 reportMode === "weekly"
                   ? `ลงชื่อ ................................ ประธานนักเรียน     ลงชื่อ ................................ ครูกิจการนักเรียน     ลงชื่อ ................................ ผู้อำนวยการโรงเรียน`
                   : `ลงชื่อ ........................................................ (${settings.headStudentAffairs || "ผู้รับผิดชอบ"}) หัวหน้าฝ่ายกิจการและพัฒนานักเรียน`,
-              font: "TH Sarabun New",
-              size: 28,
+              font: "TH Sarabun PSK",
+              size: 30,
             }),
           ],
         }),
@@ -2330,7 +2467,7 @@ function ReportView({
               new TextRun({
                 text: `รายละเอียดหลักฐาน สัปดาห์ที่ ${selectedReportWeek}`,
                 bold: true,
-                font: "TH Sarabun New",
+                font: "TH Sarabun PSK",
                 size: 34,
               }),
             ],
@@ -2358,11 +2495,7 @@ function ReportView({
                     `${item.score}/3`,
                     item.notes || "-",
                     (item.images || []).join("\n"),
-                  ].map((value, index) =>
-                    createWordCell(value, {
-                      align: index >= 3 ? AlignmentType.LEFT : AlignmentType.CENTER,
-                    })
-                  ),
+                  ].map((value) => createWordCell(value)),
                 });
               }),
             ],
@@ -2408,6 +2541,13 @@ function ReportView({
     if (!element) return;
     setIsPrinting(true);
     setExporting("pdf");
+
+    try {
+      await document.fonts?.load('16pt "TH Sarabun PSK"');
+      await document.fonts?.ready;
+    } catch (fontError) {
+      console.warn("Unable to preload TH Sarabun PSK", fontError);
+    }
 
     const exportNode = element.cloneNode(true) as HTMLElement;
     exportNode.classList.add("pdf-export-node");
@@ -2464,15 +2604,36 @@ function ReportView({
     }
   };
 
-  const handleInlineScoreChange = async (record, nextScore) => {
-    if (!record || Number(record.score) === Number(nextScore)) return;
-    const cellKey = `${record.id}-${formatDateKey(record.date)}`;
+  const handleInlineScoreChange = async (
+    record,
+    zoneId,
+    date,
+    nextScore
+  ) => {
+    if (nextScore === "") return;
+    if (
+      record &&
+      record.status === "approved" &&
+      Number(record.score) === Number(nextScore)
+    )
+      return;
+    const cellKey = `${zoneId}-${date}`;
     setSavingCell(cellKey);
     setSavedCell("");
-    const success = await updateInspection({
-      ...record,
-      score: Number(nextScore),
-    });
+    const success = record
+      ? await updateInspection({
+          ...record,
+          score: Number(nextScore),
+          status: "approved",
+        })
+      : await createInspection({
+          date,
+          zoneId,
+          score: Number(nextScore),
+          status: "approved",
+          images: [],
+          notes: "บันทึกโดยแอดมินจากตารางรายงาน",
+        });
     setSavingCell("");
     if (success) {
       setSavedCell(cellKey);
@@ -2484,9 +2645,28 @@ function ReportView({
     <div className="space-y-6">
       {/* กติกาหน้ากระดาษใช้ร่วมกันทั้งตัวอย่าง, Print และ PDF */}
       <style>{`
-        @import url('https://cdn.jsdelivr.net/gh/lazywasabi/thai-web-fonts@7/fonts/THSarabunNew/THSarabunNew.css');
+        @font-face {
+          font-family: 'TH Sarabun PSK';
+          src: url('https://raw.githubusercontent.com/SarabunConsortium/TH-Sarabun-PSK/master/THSarabunPSK%20Regular.ttf') format('truetype');
+          font-style: normal;
+          font-weight: 400;
+          font-display: swap;
+        }
+        @font-face {
+          font-family: 'TH Sarabun PSK';
+          src: url('https://raw.githubusercontent.com/SarabunConsortium/TH-Sarabun-PSK/master/THSarabunPSK%20Bold.ttf') format('truetype');
+          font-style: normal;
+          font-weight: 700;
+          font-display: swap;
+        }
         .font-sarabun, .font-sarabun * { 
-          font-family: 'THSarabunNew', 'TH Sarabun PSK', sans-serif !important; 
+          font-family: 'TH Sarabun PSK', sans-serif !important; 
+        }
+        .formal-report-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+        .formal-report-table th, .formal-report-table td {
+          text-align: center;
+          vertical-align: middle;
+          line-height: 1.15;
         }
         .pdf-export-node { box-sizing: border-box; width: 100%; padding: 24px; background: white; }
         .avoid-break, .photo-record { break-inside: avoid; page-break-inside: avoid; }
@@ -2583,25 +2763,86 @@ function ReportView({
             </div>
 
             {reportMode === "weekly" && (
-              <label className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-900">
-                <span className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-emerald-600" /> สัปดาห์ที่แสดง
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <span className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-bold text-blue-800">
+                  <CalendarDays className="h-4 w-4" />
+                  วันนี้คือ{currentAcademicWeek >= 1 && currentAcademicWeek <= 21
+                    ? `สัปดาห์ที่ ${currentAcademicWeek}`
+                    : "ช่วงนอกภาคเรียน"}
                 </span>
-                <select
-                  value={selectedReportWeek}
-                  onChange={(e) =>
-                    setSelectedReportWeek(parseInt(e.target.value))
-                  }
-                  className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-bold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  {WEEKS.map((week) => (
-                    <option key={week} value={week}>
-                      สัปดาห์ที่ {week}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <label className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-900">
+                  <span className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-emerald-600" /> สัปดาห์ที่แสดง
+                  </span>
+                  <select
+                    value={selectedReportWeek}
+                    onChange={(e) =>
+                      setSelectedReportWeek(parseInt(e.target.value))
+                    }
+                    className="max-w-[260px] rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-bold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {WEEKS.map((week) => {
+                      const dates = getWeekDatesForWeek(week);
+                      return (
+                        <option key={week} value={week}>
+                          สัปดาห์ที่ {week} · {dates[0]} ถึง {dates[4]}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+              </div>
             )}
+          </div>
+
+          <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-4">
+            <label className="md:col-span-2">
+              <span className="mb-1 block text-xs font-bold text-slate-600">
+                วันจันทร์ของสัปดาห์ที่ 1 (วันเปิดภาคเรียน)
+              </span>
+              <input
+                type="date"
+                value={settings.semesterStart}
+                onChange={(event) =>
+                  setSettings({
+                    ...settings,
+                    semesterStart: normalizeToMonday(event.target.value),
+                  })
+                }
+                className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+              />
+              <span className="mt-1 block text-[11px] text-slate-500">
+                ระบบใช้วันนี้เป็นหลักนับสัปดาห์ที่ 1–21 และปรับวันที่เลือกให้เป็นวันจันทร์อัตโนมัติ
+              </span>
+            </label>
+            <label>
+              <span className="mb-1 block text-xs font-bold text-slate-600">
+                ภาคเรียนที่
+              </span>
+              <select
+                value={settings.term}
+                onChange={(event) =>
+                  setSettings({ ...settings, term: event.target.value })
+                }
+                className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500"
+              >
+                <option value="1">1</option>
+                <option value="2">2</option>
+              </select>
+            </label>
+            <label>
+              <span className="mb-1 block text-xs font-bold text-slate-600">
+                ปีการศึกษา
+              </span>
+              <input
+                type="number"
+                value={settings.year}
+                onChange={(event) =>
+                  setSettings({ ...settings, year: event.target.value })
+                }
+                className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500"
+              />
+            </label>
           </div>
 
           {reportMode === "weekly" && (
@@ -2610,7 +2851,7 @@ function ReportView({
               <div>
                 <p className="font-bold">แก้คะแนนได้จากตารางตัวอย่างด้านล่าง</p>
                 <p className="mt-0.5 text-xs text-blue-700">
-                  เลือกคะแนน 0–3 แล้วระบบจะบันทึกลงฐานข้อมูลและอัปเดตคะแนนในปฏิทินอัตโนมัติ
+                  ทุกช่องเลือกคะแนน 0–3 ได้ รวมช่องว่างสีเขียว เมื่อบันทึกแล้วระบบจะอนุมัติและอัปเดตปฏิทินอัตโนมัติ
                 </p>
               </div>
             </div>
@@ -2722,7 +2963,7 @@ function ReportView({
             {reportMode === "weekly" && (
               <>
                 <div className="mb-6">
-                  <table className="w-full border-collapse border border-black text-[16pt]">
+                  <table className="formal-report-table w-full border-collapse border border-black text-[16pt]">
                     <thead>
                       <tr className="bg-slate-100">
                         <th className="border border-black py-1 px-2 text-center font-bold w-[40%]">
@@ -2753,21 +2994,22 @@ function ReportView({
                         let total = 0;
                         let hasData = false;
                         return (
-                          <tr key={zone.id}>
-                            <td className="border border-black py-1.5 px-2 font-bold text-left">
+                          <tr key={zone.id} className="h-[44px]">
+                            <td className="border border-black px-2 py-1.5 text-center align-middle font-bold">
                               {zone.name} {zone.fullClass}
                             </td>
                             {currentWeekDates.map((date) => {
-                              // 🚀 แก้ปัญหา Date Format ไม่ตรงกัน ทำให้ยอดเงินและช่องคะแนนขึ้นครบ!
-                              const record = approvedData.find(
+                              const record = inspections.find(
                                 (i) =>
                                   Number(i.zoneId) === zone.id &&
                                   formatDateKey(i.date) === date
                               );
-                              const score = record ? record.score : "-";
-                              const cellKey = record
-                                ? `${record.id}-${formatDateKey(record.date)}`
-                                : "";
+                              const approvedRecord =
+                                record?.status === "approved" ? record : null;
+                              const score = approvedRecord
+                                ? approvedRecord.score
+                                : "-";
+                              const cellKey = `${zone.id}-${date}`;
                               if (score !== "-") {
                                 total += Number(score);
                                 hasData = true;
@@ -2775,48 +3017,55 @@ function ReportView({
                               return (
                                 <td
                                   key={date}
-                                  className={`border border-black px-1 py-1.5 text-center transition-colors ${
-                                    savedCell === cellKey
+                                  className={`border border-black px-1 py-1.5 text-center align-middle transition-colors ${
+                                    cellKey && savedCell === cellKey
                                       ? "bg-emerald-100"
-                                      : "bg-white"
+                                      : record?.status === "pending"
+                                      ? "bg-amber-50"
+                                      : record?.status === "rejected"
+                                      ? "bg-red-50"
+                                      : approvedRecord
+                                      ? "bg-white"
+                                      : "bg-emerald-50"
                                   }`}
                                 >
-                                  {record ? (
-                                    <>
-                                      <span className="print-only hidden">
-                                        {score}
-                                      </span>
-                                      <div className="screen-only relative flex items-center justify-center gap-1">
-                                        <select
-                                          aria-label={`แก้คะแนน ${zone.name} วันที่ ${date}`}
-                                          title="แก้คะแนนแล้วบันทึกลงปฏิทินอัตโนมัติ"
-                                          value={Number(score)}
-                                          disabled={savingCell === cellKey}
-                                          onChange={(event) =>
-                                            handleInlineScoreChange(
-                                              record,
-                                              event.target.value
-                                            )
-                                          }
-                                          className="w-12 cursor-pointer rounded-lg border border-slate-300 bg-white px-1 py-1 text-center font-sans text-sm font-bold text-slate-800 outline-none hover:border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:cursor-wait disabled:opacity-50"
-                                        >
-                                          {[0, 1, 2, 3].map((value) => (
-                                            <option key={value} value={value}>
-                                              {value}
-                                            </option>
-                                          ))}
-                                        </select>
-                                        {savingCell === cellKey && (
-                                          <Save className="h-3.5 w-3.5 animate-pulse text-amber-600" />
-                                        )}
-                                        {savedCell === cellKey && (
-                                          <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
-                                        )}
-                                      </div>
-                                    </>
-                                  ) : (
-                                    "-"
-                                  )}
+                                  <span className="print-only hidden">
+                                    {score}
+                                  </span>
+                                  <div className="screen-only relative flex items-center justify-center gap-1">
+                                    <select
+                                      aria-label={`แก้คะแนน ${zone.name} วันที่ ${date}`}
+                                      title={
+                                        record
+                                          ? "แก้คะแนนและอนุมัติข้อมูล พร้อมอัปเดตปฏิทิน"
+                                          : "เพิ่มคะแนนช่องว่าง พร้อมอัปเดตปฏิทิน"
+                                      }
+                                      value={record ? Number(record.score) : ""}
+                                      disabled={savingCell === cellKey}
+                                      onChange={(event) =>
+                                        handleInlineScoreChange(
+                                          record,
+                                          zone.id,
+                                          date,
+                                          event.target.value
+                                        )
+                                      }
+                                      className="w-14 cursor-pointer rounded-lg border border-slate-300 bg-white px-1 py-1 text-center font-sans text-sm font-bold text-slate-800 outline-none hover:border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:cursor-wait disabled:opacity-50"
+                                    >
+                                      {!record && <option value="">–</option>}
+                                      {[0, 1, 2, 3].map((value) => (
+                                        <option key={value} value={value}>
+                                          {value}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {savingCell === cellKey && (
+                                      <Save className="h-3.5 w-3.5 animate-pulse text-amber-600" />
+                                    )}
+                                    {savedCell === cellKey && (
+                                      <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
+                                    )}
+                                  </div>
                                 </td>
                               );
                             })}
@@ -2946,7 +3195,7 @@ function ReportView({
             {reportMode === "semester" && (
               <div className="mb-4">
                 <div>
-                  <table className="w-full border-collapse border border-black text-[13pt] print:text-[12pt] leading-tight">
+                  <table className="formal-report-table w-full border-collapse border border-black text-[13pt] print:text-[12pt] leading-tight">
                     <thead>
                       <tr className="bg-slate-100">
                         <th className="border border-black py-0.5 px-1 text-center font-bold w-[10%]">
