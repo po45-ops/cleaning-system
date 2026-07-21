@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,6 +8,38 @@
 
     <!-- ดึง Tailwind CSS มาใช้งาน -->
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+      /* จัดข้อความในหัวตารางรายงานให้อยู่กึ่งกลางเซลล์และไม่ชิดเส้นล่าง */
+      .formal-report-table thead tr {
+        height: 46px;
+      }
+
+      .formal-report-table thead th {
+        vertical-align: middle !important;
+        text-align: center !important;
+        line-height: 1.25 !important;
+        padding-top: 8px !important;
+        padding-bottom: 10px !important;
+      }
+
+      .formal-report-table th,
+      .formal-report-table td {
+        vertical-align: middle !important;
+      }
+
+      @media print {
+        .formal-report-table thead tr {
+          height: 44px !important;
+        }
+
+        .formal-report-table thead th {
+          line-height: 1.2 !important;
+          padding-top: 7px !important;
+          padding-bottom: 9px !important;
+        }
+      }
+    </style>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
