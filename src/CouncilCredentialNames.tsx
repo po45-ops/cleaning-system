@@ -73,50 +73,124 @@ const patchCredentialTable = (): void => {
   });
 };
 
-const replaceLeadingGroupLabel = (
+const getScheduleTable = (): HTMLTableElement | undefined =>
+  Array.from(document.querySelectorAll<HTMLTableElement>("table")).find(
+    (table) =>
+      Array.from(table.querySelectorAll("th")).some(
+        (header) => header.textContent?.trim() === "กลุ่มผู้ตรวจ"
+      )
+  );
+
+const replaceGroupLabel = (
   element: HTMLElement,
   groupNumber: number
 ): void => {
   const expected = `กลุ่มที่ ${groupNumber}`;
-  const textNode = Array.from(element.childNodes).find(
-    (node) =>
-      node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim())
-  );
+  const currentText = element.textContent?.trim() || "";
 
-  if (textNode) {
-    const current = textNode.textContent?.trim() || "";
-    if (current !== expected) textNode.textContent = `${expected} `;
+  if (
+    element.dataset.councilGroupNumber === String(groupNumber) &&
+    currentText.startsWith(expected)
+  ) {
+    return;
+  }
+
+  // JSX แยกคำว่า “กลุ่ม” และค่าชั้นเป็นคนละ text node
+  // จึงต้องแทนที่ text node ทั้งหมด ไม่ใช่แก้เพียง node แรก
+  const trailingElements = Array.from(element.children);
+  element.replaceChildren(
+    document.createTextNode(`${expected} `),
+    ...trailingElements
+  );
+  element.dataset.councilGroupNumber = String(groupNumber);
+};
+
+const findGroupLabel = (
+  firstCell: HTMLTableCellElement
+): HTMLElement | undefined => {
+  const primary = firstCell.querySelector<HTMLElement>(
+    "div.font-black.text-slate-900"
+  );
+  if (primary) return primary;
+
+  return Array.from(firstCell.querySelectorAll<HTMLElement>("div")).find(
+    (element) => /^กลุ่ม(?:ที่)?\s/.test(element.textContent?.trim() || "")
+  );
+};
+
+const getOwnGroupNumber = (
+  rows: HTMLTableRowElement[],
+  authAccount: string
+): number | undefined => {
+  const highlightedIndex = rows.findIndex((row) =>
+    Array.from(row.querySelectorAll("span")).some(
+      (span) => span.textContent?.trim() === "กลุ่มของคุณ"
+    )
+  );
+  if (highlightedIndex >= 0) return highlightedIndex + 1;
+
+  const accountIndex = rows.findIndex((row) => {
+    const accountText = Array.from(row.querySelectorAll<HTMLElement>("div")).find(
+      (element) => element.textContent?.trim().startsWith("บัญชี:")
+    )?.textContent;
+    const accountId = accountText?.replace(/^บัญชี:\s*/, "").trim().toLowerCase();
+    return Boolean(authAccount) && accountId === authAccount;
+  });
+  if (accountIndex >= 0) return accountIndex + 1;
+
+  return OWNER_BY_ACCOUNT.get(authAccount)?.groupNumber;
+};
+
+const patchOwnDutyHeading = (groupNumber?: number): void => {
+  if (!groupNumber) return;
+
+  const dutyLabel = Array.from(document.querySelectorAll<HTMLElement>("p")).find(
+    (element) => element.textContent?.trim() === "หน้าที่ของกลุ่มคุณ"
+  );
+  const heading = dutyLabel?.parentElement?.querySelector<HTMLElement>("h3");
+  if (!heading) return;
+
+  const currentText = heading.textContent?.trim() || "";
+  const membersText = currentText.includes(":")
+    ? currentText.split(":").slice(1).join(":").trim()
+    : OWNER_BY_ACCOUNT.get(
+        String(
+          (() => {
+            try {
+              const auth = JSON.parse(
+                localStorage.getItem("cleaning_auth_user") || "null"
+              );
+              return auth?.id || "";
+            } catch {
+              return "";
+            }
+          })()
+        )
+          .trim()
+          .toLowerCase()
+      )?.members.join(" • ") || "ยังไม่มีรายชื่อสมาชิก";
+
+  const nextText = `กลุ่มที่ ${groupNumber}: ${membersText}`;
+  if (heading.textContent !== nextText) {
+    heading.textContent = nextText;
   }
 };
 
-const hasDirectGroupLabel = (element: HTMLElement): boolean =>
-  Array.from(element.childNodes).some((node) => {
-    if (node.nodeType !== Node.TEXT_NODE) return false;
-    const text = node.textContent?.trim() || "";
-    return /^กลุ่ม\s+(?:ป|ม)\.\d/.test(text) || /^กลุ่มที่\s+\d+/.test(text);
-  });
-
 const patchScheduleGroupNames = (): void => {
-  const scheduleTable = Array.from(
-    document.querySelectorAll<HTMLTableElement>("table")
-  ).find((table) =>
-    Array.from(table.querySelectorAll("th")).some(
-      (header) => header.textContent?.trim() === "กลุ่มผู้ตรวจ"
-    )
+  const scheduleTable = getScheduleTable();
+  if (!scheduleTable) return;
+
+  const rows = Array.from(
+    scheduleTable.querySelectorAll<HTMLTableRowElement>("tbody tr")
   );
 
-  scheduleTable
-    ?.querySelectorAll<HTMLTableRowElement>("tbody tr")
-    .forEach((row, index) => {
-      const firstCell = row.querySelector<HTMLTableCellElement>("td");
-      const groupLabel = firstCell
-        ? Array.from(firstCell.querySelectorAll<HTMLElement>("div")).find(
-            hasDirectGroupLabel
-          )
-        : undefined;
+  rows.forEach((row, index) => {
+    const firstCell = row.querySelector<HTMLTableCellElement>("td");
+    if (!firstCell) return;
 
-      if (groupLabel) replaceLeadingGroupLabel(groupLabel, index + 1);
-    });
+    const groupLabel = findGroupLabel(firstCell);
+    if (groupLabel) replaceGroupLabel(groupLabel, index + 1);
+  });
 
   let authAccount = "";
   try {
@@ -126,26 +200,13 @@ const patchScheduleGroupNames = (): void => {
     authAccount = "";
   }
 
-  const owner = OWNER_BY_ACCOUNT.get(authAccount);
-  if (!owner) return;
-
-  const ownGroupHeading = Array.from(
-    document.querySelectorAll<HTMLElement>("h3")
-  ).find((element) =>
-    /^กลุ่ม\s+(?:ป|ม)\.\d\s*:/.test(element.textContent?.trim() || "")
-  );
-
-  if (ownGroupHeading) {
-    const nextText = `กลุ่มที่ ${owner.groupNumber}: ${owner.members.join(" • ")}`;
-    if (ownGroupHeading.textContent !== nextText) {
-      ownGroupHeading.textContent = nextText;
-    }
-  }
+  patchOwnDutyHeading(getOwnGroupNumber(rows, authAccount));
 };
 
 /**
- * เติมรายชื่อผู้รับผิดชอบเป็นคอลัมน์ต่อท้ายตารางรหัสผ่านเดิม
- * และแก้ชื่อกลุ่มในตารางจัดเวรจากชื่อชั้นเป็น “กลุ่มที่ 1–9”
+ * 1) เติมรายชื่อผู้รับผิดชอบต่อท้ายตารางรหัสผ่านเดิม
+ * 2) แก้กล่อง “หน้าที่ของกลุ่มคุณ” และชื่อแถวในตารางหมุนเวียน
+ *    ให้ใช้ “กลุ่มที่ 1–9” ตรงกับบัญชีรหัสผ่าน
  */
 export default function CouncilCredentialNames(): null {
   useEffect(() => {
@@ -167,8 +228,12 @@ export default function CouncilCredentialNames(): null {
       subtree: true,
     });
 
+    // สำรองกรณี React อัปเดต DOM โดยไม่เกิด mutation ที่จุดชื่อกลุ่ม
+    const intervalId = window.setInterval(patchScreen, 800);
+
     return () => {
       window.cancelAnimationFrame(frameId);
+      window.clearInterval(intervalId);
       observer.disconnect();
       document
         .querySelectorAll("[data-council-owner-header], [data-council-owner-cell]")
