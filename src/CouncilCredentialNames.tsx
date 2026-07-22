@@ -89,6 +89,13 @@ const replaceLeadingGroupLabel = (
   }
 };
 
+const hasDirectGroupLabel = (element: HTMLElement): boolean =>
+  Array.from(element.childNodes).some((node) => {
+    if (node.nodeType !== Node.TEXT_NODE) return false;
+    const text = node.textContent?.trim() || "";
+    return /^กลุ่ม\s+(?:ป|ม)\.\d/.test(text) || /^กลุ่มที่\s+\d+/.test(text);
+  });
+
 const patchScheduleGroupNames = (): void => {
   const scheduleTable = Array.from(
     document.querySelectorAll<HTMLTableElement>("table")
@@ -104,9 +111,7 @@ const patchScheduleGroupNames = (): void => {
       const firstCell = row.querySelector<HTMLTableCellElement>("td");
       const groupLabel = firstCell
         ? Array.from(firstCell.querySelectorAll<HTMLElement>("div")).find(
-            (element) =>
-              /^กลุ่ม\s+(?:ป|ม)\.\d/.test(element.textContent?.trim() || "") ||
-              /^กลุ่มที่\s+\d+/.test(element.textContent?.trim() || "")
+            hasDirectGroupLabel
           )
         : undefined;
 
