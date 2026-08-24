@@ -58,6 +58,8 @@ type SyncNotice = {
 
 const STORAGE_KEY = "cleaning_council_schedule_v1";
 const AUTH_KEY = "cleaning_auth_user";
+const SCHEDULE_API_URL =
+  "https://script.google.com/macros/s/AKfycbyTSx3ggaJfXtYd_rQ67FoI5pPb8y_LXcTAm6RiSnkf34uiZL5GZBStGVMXyGCHQ5JfEA/exec";
 
 const MONTHS = [
   "มกราคม",
@@ -365,6 +367,22 @@ const noticeClassName = (tone: SyncNotice["tone"]): string => {
   return "border-blue-200 bg-blue-50 text-blue-800";
 };
 
+const syncScheduleToBackend = async (schedule: MonthlySchedule): Promise<void> => {
+  const response = await fetch(SCHEDULE_API_URL, {
+    method: "POST",
+    body: JSON.stringify({
+      action: "saveCouncilSchedule",
+      schedule,
+    }),
+  });
+  const result = (await response.json()) as {
+    status?: string;
+    message?: string;
+  };
+  if (!response.ok || result.status !== "success") {
+    throw new Error(result.message || `HTTP ${response.status}`);
+  }
+};
 export default function CouncilScheduleWidget(): React.ReactElement | null {
   const now = new Date();
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => getAuthUser());
@@ -458,7 +476,10 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
     setSelectedMonth(date.getMonth());
   };
 
-  const saveSchedule = (nextSchedule: MonthlySchedule, message: string) => {
+  const saveSchedule = async (
+    nextSchedule: MonthlySchedule,
+    message: string
+  ): Promise<void> => {
     const updatedSchedule = {
       ...nextSchedule,
       updatedAt: new Date().toISOString(),
@@ -469,7 +490,25 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
     setStore(nextStore);
     setSchedule(updatedSchedule);
     window.dispatchEvent(new Event("council-schedule-updated"));
-    setNotice({ tone: "success", text: message });
+    setNotice({
+      tone: "info",
+      text: `${message} กำลังซิงก์ข้อมูลผู้รับผิดชอบไปยังระบบแจ้งเตือน...`,
+    });
+
+    try {
+      await syncScheduleToBackend(updatedSchedule);
+      setNotice({
+        tone: "success",
+        text: `${message} และซิงก์รายชื่อผู้รับผิดชอบไปยังระบบแจ้งเตือนแล้ว`,
+      });
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : "ไม่สามารถเชื่อมต่อได้";
+      setNotice({
+        tone: "warning",
+        text: `บันทึกในเครื่องแล้ว แต่ซิงก์ระบบแจ้งเตือนไม่สำเร็จ: ${reason}`,
+      });
+    }
   };
 
   const randomizeSchedule = () => {
@@ -509,7 +548,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
   const togglePublished = () => {
     if (!isAdmin) return;
     const next = { ...schedule, published: !schedule.published };
-    saveSchedule(
+    void saveSchedule(
       next,
       next.published
         ? "เผยแพร่ตารางแล้ว สภานักเรียนสามารถเปิดดูตารางฉบับนี้ได้"

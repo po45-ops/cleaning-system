@@ -1,0 +1,192 @@
+# ตั้งค่าแจ้งเตือน Facebook Messenger สำหรับ cleaning-system
+
+ระบบนี้ส่งจาก **Facebook Page ไปยังแชทส่วนตัวของผู้ดูแล** โดยอ่านข้อความการตรวจจาก Google Sheets ผ่าน Google Apps Script เดิมของโครงการ
+
+> สำคัญ: Messenger ไม่อนุญาตให้ส่งอัตโนมัติจากบัญชี Facebook ส่วนตัว และไม่รองรับการส่งเข้าแชทกลุ่มทั่วไปผ่าน API ทางการ
+
+## สิ่งที่ระบบรองรับ
+
+| เหตุการณ์ | การทำงาน |
+| --- | --- |
+| 09:00 และยังไม่ครบ | แจ้งเตือนครั้งที่ 1 |
+| 12:00 และยังไม่ครบ | แจ้งจำนวนพร้อมรายชื่อเขต |
+| 15:00 และยังไม่ครบ | แจ้งเตือนครั้งสุดท้าย |
+| ตรวจครบ 9/9 | แจ้งสำเร็จภายในประมาณ 5 นาที หรือทันทีเมื่อเพิ่ม hook หลังบันทึก |
+| คะแนน 0 (ไม่ผ่าน) | แจ้งผู้ดูแลแยกตามเขต |
+| 16:30 | ส่งสรุปประจำวัน; เปลี่ยนเวลาได้ |
+
+ระบบตรวจเฉพาะวันจันทร์–วันศุกร์ และใช้เขตตามหน้าเว็บจริง: ป.1–ป.6 และ ม.1–ม.3
+
+## 1. สร้าง Facebook Page
+
+1. เปิด [หน้าสร้าง Facebook Page](https://www.facebook.com/pages/create)
+2. ตั้งชื่อแนะนำ: `ระบบตรวจเวรทำความสะอาด โรงเรียนไตรธารวิทยา`
+3. เลือกหมวดหมู่ `โรงเรียน` หรือ `การศึกษา`
+4. ใส่คำอธิบายว่าเป็นเพจแจ้งเตือนภายในของโรงเรียน
+5. เปิดใช้งานปุ่ม **ส่งข้อความ**
+
+ไม่ต้องสร้างบัญชี Facebook ใหม่ และไม่ต้องส่งรหัสผ่านบัญชีส่วนตัวให้ผู้อื่น
+
+## 2. สร้าง Meta App และเชื่อม Page
+
+1. เปิด [Meta for Developers > My Apps](https://developers.facebook.com/apps/)
+2. เลือก **Create App** แล้วเลือกกรณีใช้งานเกี่ยวกับ Messenger/Business Messaging
+3. เพิ่มผลิตภัณฑ์ **Messenger** และเชื่อม Facebook Page ที่สร้างในขั้นตอนแรก
+4. ที่ Token Generation เลือก Page แล้วสร้าง **Page Access Token**
+5. ตรวจว่ามีสิทธิ์ `pages_messaging`
+
+คู่มือทางการ: [Get Started – Messenger Platform](https://developers.facebook.com/documentation/business-messaging/messenger-platform/get-started)
+
+ช่วงทดสอบสามารถใช้ App ใน Development mode ได้ หากผู้รับเป็นเจ้าของ/ผู้ดูแล/ผู้ทดสอบของ App เอง หากต้องการส่งให้บุคลากรอื่นในภายหลัง อาจต้องเปิด Live mode และผ่าน App Review ตามที่ Meta กำหนด
+
+## 3. เพิ่มโมดูลลงใน Google Apps Script
+
+1. เปิด Google Apps Script โครงการเดียวกับ URL ฐานข้อมูลของ cleaning-system
+2. เพิ่มไฟล์ Script ใหม่ชื่อ `MessengerNotifications`
+3. คัดลอกเนื้อหาจาก [`apps-script/MessengerNotifications.gs`](../apps-script/MessengerNotifications.gs) ไปวาง
+4. กดบันทึก
+5. รันฟังก์ชัน `initializeCleaningMessengerConfig` หนึ่งครั้ง และอนุญาตสิทธิ์ที่ Google ขอ
+
+อย่าสร้าง `doGet` หรือ `doPost` ซ้ำ เพราะโครงการเดิมมีฟังก์ชันเหล่านี้สำหรับอ่านและบันทึกผลตรวจอยู่แล้ว
+
+## 4. ตั้งค่า Script Properties
+
+เปิด **Project Settings > Script Properties** แล้วเพิ่ม/ตรวจค่าต่อไปนี้
+
+| Property | ค่า |
+| --- | --- |
+| `META_PAGE_ID` | ID ของ Facebook Page |
+| `META_PAGE_ACCESS_TOKEN` | Page Access Token จาก Meta |
+| `MESSENGER_ENABLED` | เริ่มด้วย `false` |
+| `META_GRAPH_API_VERSION` | `v26.0` |
+| `MESSENGER_MESSAGING_TYPE` | `UPDATE` |
+| `CLEANING_TIME_ZONE` | `Asia/Bangkok` |
+| `END_OF_DAY_TIME` | `16:30` หรือเวลาสิ้นวันที่ต้องการ |
+| `CLEANING_DATA_URL` | URL `/exec` ของ Apps Script เดิม |
+| `CLEANING_APP_URL` | `https://po45-ops.github.io/cleaning-system/` |
+| `SCHOOL_NAME` | `โรงเรียนไตรธารวิทยา` |
+
+`META_WEBHOOK_VERIFY_TOKEN` จะถูกสร้างให้อัตโนมัติ ห้ามนำ `META_PAGE_ACCESS_TOKEN` ไปใส่ใน `App.tsx`, README, Issue, Pull Request หรือไฟล์สาธารณะใด ๆ
+
+## 5. เพิ่มเส้นทาง Webhook เพื่อรับ PSID
+
+PSID คือรหัสผู้รับเฉพาะของ Page ระบบจะเก็บ PSID ที่พบไว้เป็น “รออนุมัติ” ก่อน จึงไม่มีผู้ที่ทัก Page แล้วถูกสมัครรับแจ้งเตือนโดยอัตโนมัติ
+
+เพิ่มบรรทัดต่อไปนี้ไว้บนสุดของ `doGet(e)` เดิม ก่อนโค้ดอ่านข้อมูล:
+
+```javascript
+const metaWebhookResponse = maybeHandleMetaWebhookGet(e);
+if (metaWebhookResponse) return metaWebhookResponse;
+```
+
+เพิ่มบรรทัดต่อไปนี้ไว้บนสุดของ `doPost(e)` เดิม ก่อนโค้ดสร้าง/แก้ไข/ลบข้อมูล:
+
+```javascript
+const metaWebhookResponse = maybeHandleMetaWebhookPost(e);
+if (metaWebhookResponse) return metaWebhookResponse;
+```
+
+ตัวอย่างโครงสร้างที่ถูกต้อง:
+
+```javascript
+function doGet(e) {
+  const metaWebhookResponse = maybeHandleMetaWebhookGet(e);
+  if (metaWebhookResponse) return metaWebhookResponse;
+
+  // โค้ด doGet เดิมทั้งหมดอยู่ต่อจากนี้
+}
+
+function doPost(e) {
+  const metaWebhookResponse = maybeHandleMetaWebhookPost(e);
+  if (metaWebhookResponse) return metaWebhookResponse;
+
+  // โค้ด doPost เดิมทั้งหมดอยู่ต่อจากนี้
+}
+```
+
+จากนั้น Deploy Google Apps Script เป็น Web App เวอร์ชันใหม่ โดยใช้ URL `/exec` เดิม
+
+## 6. ตั้ง Webhook ใน Meta
+
+1. เปิด Messenger settings ของ Meta App
+2. เพิ่ม Callback URL เป็น URL `/exec` ของ Google Apps Script
+3. ใส่ Verify Token ให้ตรงกับ `META_WEBHOOK_VERIFY_TOKEN` ใน Script Properties
+4. Subscribe Page กับฟิลด์ `messages` และ `messaging_postbacks` หากมีให้เลือก
+5. ใช้บัญชี Facebook ของผู้ดูแล เปิด Page แล้วส่งข้อความ `เริ่มแจ้งเตือน`
+6. กลับไป Apps Script แล้วรัน `approvePendingMessengerRecipients`
+
+ฟังก์ชันข้อ 6 จะเพิ่ม PSID ที่พบลงในทั้ง `MESSENGER_RECIPIENT_IDS` และ `MESSENGER_ADMIN_RECIPIENT_IDS` โดยไม่ต้องนำรหัสมาวางใน GitHub
+
+## 7. ทดสอบก่อนเปิดใช้งาน
+
+ทำตามลำดับนี้:
+
+1. รัน `previewCleaningMessengerMessages` แล้วตรวจข้อความใน **Executions > Logs** — ขั้นตอนนี้ไม่ส่งจริง
+2. ตรวจว่าได้ส่งข้อความหา Page จากบัญชีผู้รับแล้ว
+3. รัน `sendCleaningMessengerConnectionTest`
+4. ตรวจว่าได้รับข้อความ “เชื่อมต่อ Messenger สำเร็จ” ในแชทส่วนตัว
+5. เปลี่ยน `MESSENGER_ENABLED` เป็น `true`
+6. รัน `installCleaningMessengerTrigger`
+
+การรัน `installCleaningMessengerTrigger` ซ้ำจะลบ Trigger ของโมดูลนี้แล้วสร้างใหม่เพียงหนึ่งรายการ จึงไม่เกิด Trigger ซ้ำ
+
+## 8. เปิดแจ้งทันทีหลังบันทึก (แนะนำ)
+
+Trigger ทุก 5 นาทีรองรับครบ 9/9 และเขตไม่ผ่านอยู่แล้ว หากต้องการให้เร็วขึ้น ให้เพิ่มหลังคำสั่งบันทึก Google Sheets สำเร็จใน `doPost` เดิม:
+
+```javascript
+SpreadsheetApp.flush();
+notifyCleaningDataChanged();
+```
+
+ถ้ายังไม่แน่ใจตำแหน่ง ให้ใช้ Trigger ทุก 5 นาทีไปก่อน อย่าเพิ่มบรรทัดนี้ไว้ก่อนที่ข้อมูลจะถูกเขียนลง Sheet
+
+## 9. ซิงก์ตารางเวรเพื่อแสดงรายชื่อผู้รับผิดชอบ
+
+ข้อความเตือนจะอ่านตารางหมุนเวียนของสัปดาห์จริง ไม่ใช้การผูกชื่อกับเขตแบบถาวร:
+
+1. ใช้ไฟล์ `MessengerNotifications.gs` เวอร์ชันล่าสุด แล้ว Deploy Web App เป็นเวอร์ชันใหม่ด้วย URL `/exec` เดิม
+2. Merge/เผยแพร่หน้าเว็บเวอร์ชันที่มีการซิงก์ตารางเวร
+3. เข้าระบบด้วยบัญชีแอดมิน เปิด **ตารางจัดเวรตรวจ** และเลือกเดือนปัจจุบัน
+4. ตรวจรายชื่อและเขตของแต่ละสัปดาห์ แล้วกด **บันทึก** หรือ **เผยแพร่ตาราง**
+5. ต้องเห็นข้อความสีเขียวว่า “ซิงก์รายชื่อผู้รับผิดชอบไปยังระบบแจ้งเตือนแล้ว”
+6. ใน Apps Script รัน `previewCouncilDutyForToday` เพื่อตรวจชื่อผู้รับผิดชอบทั้ง 9 เขต
+7. รัน `previewCleaningMessengerMessages` เพื่อตรวจรูปแบบข้อความก่อนส่งจริง
+
+ระบบใช้เฉพาะตารางที่มีสถานะ **เผยแพร่แล้ว** หากตารางยังเป็นฉบับร่าง ข้อความจะแสดงว่า `ยังไม่พบตารางเวรที่เผยแพร่` เพื่อป้องกันการแจ้งชื่อผิด
+
+ตัวอย่าง:
+
+```text
+• เขต 2 · ป.2
+  ผู้รับผิดชอบ: กลุ่มที่ 4 (สภา04) — วรัชญา · มหายศนันท์
+```
+
+ข้อความเวลา 09:00, 12:00, 15:00 และสรุปสิ้นวันจะแสดงรายชื่อรูปแบบนี้สำหรับทุกเขตที่ยังไม่ได้รายงาน
+## 10. ทดสอบสถานการณ์จริง
+
+- ก่อน 09:00: ไม่ควรมีข้อความเตือนเวลา
+- หลัง 09:00 และไม่ครบ: เตือนครั้งที่ 1 เพียงครั้งเดียว
+- หลัง 12:00: แสดงรายชื่อเขตที่ขาด
+- บันทึกคะแนน 0: แจ้งผู้ดูแลเพียงครั้งเดียวต่อรายการ
+- บันทึกครบ 9 เขต: แจ้งครบ 9/9 แม้จะมีบางเขตคะแนน 0; การ “ตรวจครบ” ไม่ได้แปลว่า “ผ่านทุกเขต”
+- เวลา 16:30: ส่งสรุปสิ้นวันหนึ่งครั้ง
+- เสาร์–อาทิตย์: ไม่ส่งข้อความตามเวลา
+
+หากต้องการทดสอบวันเดิมซ้ำ ให้รัน `resetCleaningMessengerNotificationState` แต่ต้องระวังว่ารอบถัดไปอาจส่งข้อความของวันนั้นซ้ำ
+
+## ข้อจำกัดของ Messenger ที่ต้องทราบ
+
+Messenger มาตรฐานอนุญาตให้ Page ส่งหาผู้ใช้ที่เริ่มบทสนทนาและยังอยู่ในกรอบเวลาที่ Meta อนุญาต โดยทั่วไปคือ 24 ชั่วโมง การเลือก `UPDATE` ไม่ได้เป็นการข้ามข้อจำกัดนี้
+
+[Marketing Messages](https://developers.facebook.com/docs/messenger-platform/marketing-messages/) ส่งนอกกรอบมาตรฐานได้เมื่อผู้ใช้กดยินยอม แต่จำกัดหนึ่งข้อความต่อวันต่อ notification token จึงใช้แทนกฎ 09:00, 12:00 และ 15:00 ทั้งหมดพร้อมกันไม่ได้ ห้ามใช้ Message Tag ที่ไม่ตรงวัตถุประสงค์เพื่อหลบข้อจำกัด เพราะอาจทำให้ Page หรือ App ถูกจำกัดสิทธิ์
+
+หาก Meta ตอบข้อผิดพลาดเรื่อง messaging window ให้ผู้รับส่งข้อความหา Page อีกครั้ง แล้วทดสอบใหม่ สำหรับงานภายในที่จำเป็นต้องแจ้งหลายครั้งทุกวันโดยไม่มีการโต้ตอบ LINE Official Account หรือ Telegram Bot จะเหมาะกว่า
+
+## การดูแลความปลอดภัย
+
+- Token และ PSID ต้องอยู่ใน Script Properties เท่านั้น
+- หากสงสัยว่า Token รั่ว ให้ยกเลิกและสร้างใหม่ทันที
+- ตรวจประวัติการทำงานที่ Apps Script > Executions
+- รัน `uninstallCleaningMessengerTrigger` เมื่อต้องการหยุด Trigger
+- ตั้ง `MESSENGER_ENABLED=false` เพื่อหยุดส่งทันทีโดยไม่ลบการตั้งค่า
