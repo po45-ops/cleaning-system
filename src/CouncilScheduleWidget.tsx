@@ -368,19 +368,45 @@ const noticeClassName = (tone: SyncNotice["tone"]): string => {
 };
 
 const syncScheduleToBackend = async (schedule: MonthlySchedule): Promise<void> => {
-  const response = await fetch(SCHEDULE_API_URL, {
+  // Apps Script answers POST requests through a redirect. Chrome can block the
+  // redirected response even though Apps Script has already stored the data,
+  // so send the write as an opaque request and verify it with a separate GET.
+  await fetch(SCHEDULE_API_URL, {
     method: "POST",
+    mode: "no-cors",
     body: JSON.stringify({
       action: "saveCouncilSchedule",
       schedule,
     }),
   });
-  const result = (await response.json()) as {
+
+  const verifyUrl =
+    `${SCHEDULE_API_URL}?action=getCouncilSchedule&key=${encodeURIComponent(
+      schedule.key
+    )}&refresh=${Date.now()}`;
+  const verifyResponse = await fetch(verifyUrl, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const result = (await verifyResponse.json()) as {
     status?: string;
     message?: string;
+    data?: MonthlySchedule | null;
   };
-  if (!response.ok || result.status !== "success") {
-    throw new Error(result.message || `HTTP ${response.status}`);
+  const syncedSchedule = result.data;
+  const matchesSavedSchedule =
+    syncedSchedule?.key === schedule.key &&
+    syncedSchedule.updatedAt === schedule.updatedAt &&
+    syncedSchedule.published === schedule.published;
+
+  if (
+    !verifyResponse.ok ||
+    result.status !== "success" ||
+    !matchesSavedSchedule
+  ) {
+    throw new Error(
+      result.message || "ส่งข้อมูลแล้ว แต่ตรวจยืนยันตารางเวรไม่สำเร็จ"
+    );
   }
 };
 export default function CouncilScheduleWidget(): React.ReactElement | null {
