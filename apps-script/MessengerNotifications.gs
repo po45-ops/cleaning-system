@@ -1828,7 +1828,7 @@ function parseCleaningMessengerCommand_(text) {
   }
 
   if (
-    /(pdf.*(วันนี้|ประจำวัน)|(วันนี้|ประจำวัน).*pdf|ไฟล์.*(วันนี้|ประจำวัน))/i.test(
+    /(pdf.*(วันนี้|ประจำวัน|รายวัน|แต่ละวัน)|(วันนี้|ประจำวัน|รายวัน|แต่ละวัน).*pdf|ไฟล์.*(วันนี้|ประจำวัน|รายวัน|แต่ละวัน))/i.test(
       normalized
     )
   ) {
@@ -1852,7 +1852,7 @@ function parseCleaningMessengerCommand_(text) {
   }
 
   if (
-    /(สรุป.*เดือนนี้|รายงานเดือนนี้|เดือนนี้.*เป็นอย่างไร|สถิติเดือนนี้|ผล.*เดือนนี้)/.test(
+    /(สรุป.*เดือนนี้|รายงานเดือนนี้|รายงานประจำเดือน|เดือนนี้.*เป็นอย่างไร|สถิติเดือนนี้|ผล.*เดือนนี้)/.test(
       normalized
     )
   ) {
@@ -2166,7 +2166,37 @@ function sendMessengerReply_(message, senderId, config) {
   const responseConfig = Object.assign({}, config, {
     messagingType: "RESPONSE",
   });
-  sendMessengerTextToOne_(message, senderId, responseConfig);
+  splitMessengerText_(message, 1900).forEach((chunk) => {
+    sendMessengerTextToOne_(chunk, senderId, responseConfig);
+  });
+}
+
+function splitMessengerText_(message, limit) {
+  const safeLimit = Math.max(200, Number(limit) || 1900);
+  const lines = String(message || "").split("\n");
+  const chunks = [];
+  let current = "";
+
+  lines.forEach((line) => {
+    let remaining = line;
+    while (remaining.length > safeLimit) {
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+      chunks.push(remaining.slice(0, safeLimit));
+      remaining = remaining.slice(safeLimit);
+    }
+    const candidate = current ? current + "\n" + remaining : remaining;
+    if (candidate.length > safeLimit) {
+      chunks.push(current);
+      current = remaining;
+    } else {
+      current = candidate;
+    }
+  });
+  if (current) chunks.push(current);
+  return chunks.length ? chunks : [""];
 }
 
 /**
