@@ -19,6 +19,7 @@ const CLEANING_MESSENGER = Object.freeze({
   DEFAULT_GRAPH_VERSION: "v26.0",
   STATE_PROPERTY: "CLEANING_MESSENGER_STATE_V1",
   PENDING_RECIPIENTS_PROPERTY: "MESSENGER_PENDING_RECIPIENT_IDS",
+  COUNCIL_SCHEDULE_PROPERTY_PREFIX: "COUNCIL_DUTY_SCHEDULE_V1_",
   STATE_RETENTION_DAYS: 45,
   TOTAL_ZONES: 9,
   ZONES: [
@@ -371,6 +372,7 @@ function getCleaningSnapshot_(config, now) {
   const missingZones = CLEANING_MESSENGER.ZONES.filter(
     (zone) => !latestByZone[zone.id]
   );
+  const dutyByZone = getCouncilDutyByZone_(todayKey);
   const failedRecords = checkedZoneIds
     .map((zoneId) => latestByZone[zoneId])
     .filter(isFailedRecord_);
@@ -381,6 +383,7 @@ function getCleaningSnapshot_(config, now) {
     checkedZoneIds,
     checkedCount: checkedZoneIds.length,
     missingZones,
+    dutyByZone,
     failedRecords,
   };
 }
@@ -500,7 +503,7 @@ function buildReminderMessage_(type, snapshot, config) {
     reminder_09: {
       heading: "🔔 แจ้งเตือนการตรวจความสะอาด — ครั้งที่ 1",
       time: "09:00",
-      includeZones: false,
+      includeZones: true,
     },
     reminder_12: {
       heading: "🔔 แจ้งเตือนการตรวจความสะอาด",
@@ -525,7 +528,10 @@ function buildReminderMessage_(type, snapshot, config) {
   ];
 
   if (definition.includeZones && snapshot.missingZones.length) {
-    lines.push("", ...formatZoneLines_(snapshot.missingZones));
+    lines.push(
+      "",
+      ...formatZoneDutyLines_(snapshot.missingZones, snapshot.dutyByZone)
+    );
   }
 
   lines.push(
@@ -557,11 +563,13 @@ function buildFailureMessage_(record, snapshot, config) {
     (item) => item.id === Number(record.zoneId)
   );
   const notes = String(record.notes || "ไม่มีหมายเหตุ").trim();
+  const duty = snapshot.dutyByZone[Number(record.zoneId)];
   return [
     "⚠️ พบเขตที่ไม่ผ่านการตรวจความสะอาด",
     "",
     thaiDateLabel_(snapshot.dateKey),
     `${zone ? `${zone.name} · ${zone.className}` : `เขต ${record.zoneId}`}`,
+    formatCouncilDutyLine_(duty),
     "คะแนน 0/3 — ไม่ผ่าน",
     `สถานะ: ${thaiInspectionStatus_(record.status)}`,
     `หมายเหตุ: ${notes}`,
@@ -570,7 +578,6 @@ function buildFailureMessage_(record, snapshot, config) {
     `🔗 ${config.appUrl}`,
   ].join("\n");
 }
-
 function buildEndOfDayMessage_(snapshot, config) {
   const percent = Math.round(
     (snapshot.checkedCount / CLEANING_MESSENGER.TOTAL_ZONES) * 100
@@ -586,7 +593,11 @@ function buildEndOfDayMessage_(snapshot, config) {
   ];
 
   if (snapshot.missingZones.length) {
-    lines.push("", "เขตที่ยังไม่ได้ตรวจ", ...formatZoneLines_(snapshot.missingZones));
+    lines.push(
+      "",
+      "เขตที่ยังไม่ได้ตรวจ",
+      ...formatZoneDutyLines_(snapshot.missingZones, snapshot.dutyByZone)
+    );
   }
   if (snapshot.failedRecords.length) {
     const failedZones = snapshot.failedRecords
@@ -605,6 +616,26 @@ function buildEndOfDayMessage_(snapshot, config) {
 
 function formatZoneLines_(zones) {
   return zones.map((zone) => `• ${zone.name} · ${zone.className}`);
+}
+
+function formatZoneDutyLines_(zones, dutyByZone) {
+  const lines = [];
+  zones.forEach((zone) => {
+    lines.push(`• ${zone.name} · ${zone.className}`);
+    lines.push(`  ${formatCouncilDutyLine_(dutyByZone[zone.id])}`);
+  });
+  return lines;
+}
+
+function formatCouncilDutyLine_(duty) {
+  if (!duty) {
+    return "ผู้รับผิดชอบ: ยังไม่พบตารางเวรที่เผยแพร่";
+  }
+  const members = duty.members.length
+    ? duty.members.join(" · ")
+    : "ยังไม่มีรายชื่อสมาชิก";
+  const account = duty.accountId ? ` (${duty.accountId})` : "";
+  return `ผู้รับผิดชอบ: กลุ่มที่ ${duty.groupNumber}${account} — ${members}`;
 }
 
 function thaiDateLabel_(dateKey) {
@@ -727,6 +758,211 @@ function pruneNotificationState_(state, now) {
 }
 
 /**
+ * Stores the published council duty schedule sent by the admin schedule UI.
+ * One Script Property is used per month to stay below Apps Script value limits.
+ */
+function handleCouncilDutySchedulePost_(payload) {
+  try {
+    const schedule = normalizeCouncilDutySchedule_(payload.schedule);
+    const serialized = JSON.stringify(schedule);
+    if (serialized.length > 8500) {
+      throw new Error("ตารางเวรมีขนาดใหญ่เกินกำหนด");
+    }
+    PropertiesService.getScriptProperties().setProperty(
+      councilDutySchedulePropertyKey_(schedule.key),
+      serialized
+    );
+    return createJsonTextOutput_({
+      status: "success",
+      message: schedule.published
+        ? "ซิงก์ตารางเวรที่เผยแพร่แล้ว"
+        : "ซิงก์ตารางเวรฉบับร่างแล้ว",
+      scheduleKey: schedule.key,
+      published: schedule.published,
+    });
+  } catch (error) {
+    return createJsonTextOutput_({
+      status: "error",
+      message: String((error && error.message) || error || "ข้อมูลไม่ถูกต้อง"),
+    });
+  }
+}
+
+function handleCouncilDutyScheduleGet_(scheduleKey) {
+  if (!/^\d{4}-\d{2}$/.test(String(scheduleKey || ""))) {
+    return createJsonTextOutput_({
+      status: "error",
+      message: "กรุณาระบุเดือนรูปแบบ YYYY-MM",
+    });
+  }
+  const raw = PropertiesService.getScriptProperties().getProperty(
+    councilDutySchedulePropertyKey_(scheduleKey)
+  );
+  let schedule = null;
+  if (raw) {
+    try {
+      schedule = JSON.parse(raw);
+    } catch (error) {
+      schedule = null;
+    }
+  }
+  return createJsonTextOutput_({ status: "success", data: schedule });
+}
+
+function createJsonTextOutput_(value) {
+  return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(
+    ContentService.MimeType.JSON
+  );
+}
+
+function normalizeCouncilDutySchedule_(input) {
+  if (!input || typeof input !== "object") {
+    throw new Error("ไม่พบข้อมูลตารางเวร");
+  }
+  const year = Number(input.year);
+  const month = Number(input.month);
+  if (!Number.isInteger(year) || year < 2020 || year > 2100) {
+    throw new Error("ปีของตารางเวรไม่ถูกต้อง");
+  }
+  if (!Number.isInteger(month) || month < 0 || month > 11) {
+    throw new Error("เดือนของตารางเวรไม่ถูกต้อง");
+  }
+  const expectedKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+  if (String(input.key || "") !== expectedKey) {
+    throw new Error("รหัสเดือนของตารางเวรไม่ตรงกับปีและเดือน");
+  }
+  if (!Array.isArray(input.groups) || input.groups.length !== 9) {
+    throw new Error("ตารางเวรต้องมี 9 กลุ่ม");
+  }
+  if (!Array.isArray(input.weeks) || !input.weeks.length || input.weeks.length > 6) {
+    throw new Error("จำนวนสัปดาห์ในตารางเวรไม่ถูกต้อง");
+  }
+
+  const groupIds = {};
+  const groups = input.groups.map((group) => {
+    const id = String((group && group.id) || "").trim().slice(0, 80);
+    if (!id || groupIds[id]) {
+      throw new Error("รหัสกลุ่มซ้ำหรือไม่ถูกต้อง");
+    }
+    groupIds[id] = true;
+    const members = Array.isArray(group.members)
+      ? group.members
+          .map((name) => String(name || "").trim().slice(0, 80))
+          .filter(Boolean)
+          .slice(0, 8)
+      : [];
+    return {
+      id,
+      accountId: String(group.accountId || "").trim().slice(0, 80),
+      homeClass: String(group.homeClass || "").trim().slice(0, 40),
+      homeZoneId: Number(group.homeZoneId),
+      members,
+    };
+  });
+
+  const weekIds = {};
+  const weeks = input.weeks.map((week) => {
+    const id = String((week && week.id) || "").trim().slice(0, 100);
+    const start = String((week && week.start) || "");
+    const end = String((week && week.end) || "");
+    if (!id || weekIds[id] || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      throw new Error("ข้อมูลสัปดาห์ไม่ถูกต้อง");
+    }
+    weekIds[id] = true;
+    return {
+      id,
+      label: String(week.label || "").trim().slice(0, 80),
+      start,
+      end,
+    };
+  });
+
+  const assignments = {};
+  weeks.forEach((week) => {
+    const source = input.assignments && input.assignments[week.id];
+    if (!source || typeof source !== "object") {
+      throw new Error(`ไม่พบการจัดเขตของ ${week.label || week.id}`);
+    }
+    const zoneIds = {};
+    assignments[week.id] = {};
+    groups.forEach((group) => {
+      const zoneId = Number(source[group.id]);
+      if (!Number.isInteger(zoneId) || zoneId < 1 || zoneId > 9 || zoneIds[zoneId]) {
+        throw new Error(`การจัดเขตของ ${week.label || week.id} ไม่ครบหรือมีเขตซ้ำ`);
+      }
+      zoneIds[zoneId] = true;
+      assignments[week.id][group.id] = zoneId;
+    });
+  });
+
+  return {
+    key: expectedKey,
+    year,
+    month,
+    weeks,
+    assignments,
+    groups,
+    published: Boolean(input.published),
+    updatedAt: String(input.updatedAt || new Date().toISOString()).slice(0, 80),
+    shuffleNonce: Number(input.shuffleNonce) || 0,
+  };
+}
+
+function councilDutySchedulePropertyKey_(scheduleKey) {
+  return (
+    CLEANING_MESSENGER.COUNCIL_SCHEDULE_PROPERTY_PREFIX +
+    String(scheduleKey).replace(/-/g, "_")
+  );
+}
+
+function getCouncilDutyByZone_(dateKey) {
+  const raw = PropertiesService.getScriptProperties().getProperty(
+    councilDutySchedulePropertyKey_(String(dateKey).slice(0, 7))
+  );
+  if (!raw) return {};
+
+  let schedule;
+  try {
+    schedule = JSON.parse(raw);
+  } catch (error) {
+    return {};
+  }
+  if (!schedule || !schedule.published || !Array.isArray(schedule.weeks)) {
+    return {};
+  }
+  const week = schedule.weeks.find(
+    (item) => dateKey >= item.start && dateKey <= item.end
+  );
+  if (!week || !Array.isArray(schedule.groups)) return {};
+
+  const weekAssignments =
+    (schedule.assignments && schedule.assignments[week.id]) || {};
+  const dutyByZone = {};
+  schedule.groups.forEach((group, index) => {
+    const zoneId = Number(weekAssignments[group.id]);
+    if (!Number.isInteger(zoneId) || zoneId < 1 || zoneId > 9) return;
+    dutyByZone[zoneId] = {
+      groupNumber: index + 1,
+      accountId: String(group.accountId || "").trim(),
+      members: Array.isArray(group.members)
+        ? group.members.map((name) => String(name).trim()).filter(Boolean)
+        : [],
+    };
+  });
+  return dutyByZone;
+}
+
+/** Logs the council group responsible for every zone today. */
+function previewCouncilDutyForToday() {
+  const config = getCleaningMessengerConfig_();
+  const dateKey = dateKeyInTimeZone_(new Date(), config.timeZone);
+  const dutyByZone = getCouncilDutyByZone_(dateKey);
+  CLEANING_MESSENGER.ZONES.forEach((zone) => {
+    console.log(`${zone.name}: ${formatCouncilDutyLine_(dutyByZone[zone.id])}`);
+  });
+}
+
+/**
  * Meta webhook routing helpers.
  *
  * Add maybeHandleMetaWebhookGet(e) at the beginning of the existing doGet(e),
@@ -735,6 +971,9 @@ function pruneNotificationState_(state, now) {
  */
 function maybeHandleMetaWebhookGet(e) {
   const parameters = (e && e.parameter) || {};
+  if (parameters.action === "getCouncilSchedule") {
+    return handleCouncilDutyScheduleGet_(parameters.key);
+  }
   if (!parameters["hub.mode"]) return null;
 
   const config = getCleaningMessengerConfig_();
@@ -754,6 +993,9 @@ function maybeHandleMetaWebhookPost(e) {
     payload = JSON.parse(e.postData.contents);
   } catch (error) {
     return null;
+  }
+  if (payload && payload.action === "saveCouncilSchedule") {
+    return handleCouncilDutySchedulePost_(payload);
   }
   if (!payload || payload.object !== "page" || !Array.isArray(payload.entry)) {
     return null;
