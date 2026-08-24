@@ -924,42 +924,11 @@ function councilDutySchedulePropertyKey_(scheduleKey) {
 }
 
 function getCouncilDutyByZone_(dateKey) {
-  const raw = PropertiesService.getScriptProperties().getProperty(
-    councilDutySchedulePropertyKey_(String(dateKey).slice(0, 7))
-  );
-  if (!raw) return {};
-
-  let schedule;
-  try {
-    schedule = JSON.parse(raw);
-  } catch (error) {
-    return {};
-  }
-  if (!schedule || !schedule.published || !Array.isArray(schedule.weeks)) {
-    return {};
-  }
-  const week = schedule.weeks.find(
-    (item) => dateKey >= item.start && dateKey <= item.end
-  );
-  if (!week || !Array.isArray(schedule.groups)) return {};
-
-  const weekAssignments =
-    (schedule.assignments && schedule.assignments[week.id]) || {};
-  const dutyByZone = {};
-  schedule.groups.forEach((group, index) => {
-    const zoneId = Number(weekAssignments[group.id]);
-    if (!Number.isInteger(zoneId) || zoneId < 1 || zoneId > 9) return;
-    dutyByZone[zoneId] = {
-      groupNumber: index + 1,
-      accountId: String(group.accountId || "").trim(),
-      members: Array.isArray(group.members)
-        ? group.members.map((name) => String(name).trim()).filter(Boolean)
-        : [],
-    };
-  });
-  return dutyByZone;
+  const resolved = findPublishedCouncilDutyWeekForDate_(dateKey);
+  return resolved
+    ? getCouncilDutyByZoneForWeek_(resolved.schedule, resolved.week)
+    : {};
 }
-
 /** Logs the council group responsible for every zone today. */
 function previewCouncilDutyForToday() {
   const config = getCleaningMessengerConfig_();
