@@ -20,6 +20,9 @@ const CLEANING_MESSENGER = Object.freeze({
   STATE_PROPERTY: "CLEANING_MESSENGER_STATE_V1",
   PENDING_RECIPIENTS_PROPERTY: "MESSENGER_PENDING_RECIPIENT_IDS",
   COUNCIL_SCHEDULE_PROPERTY_PREFIX: "COUNCIL_DUTY_SCHEDULE_V1_",
+  REPORT_QUEUE_PROPERTY: "CLEANING_REPORT_JOB_QUEUE_V1",
+  REPORT_TRIGGER_HANDLER: "processCleaningReportJobs",
+  MAX_REPORT_QUEUE_ITEMS: 12,
   STATE_RETENTION_DAYS: 45,
   TOTAL_ZONES: 9,
   ZONES: [
@@ -56,6 +59,9 @@ function initializeCleaningMessengerConfig() {
     MESSENGER_MESSAGING_TYPE: "UPDATE",
     MESSENGER_COMMANDS_ENABLED: "true",
     MESSENGER_COMMANDS_ADMIN_ONLY: "true",
+    SEND_DAILY_PDF_REPORT: "true",
+    SEND_MONTHLY_PDF_REPORT: "true",
+    CLEANING_REPORT_MAX_IMAGES: "6",
     SCHOOL_NAME: "โรงเรียนไตรธารวิทยา",
   };
 
@@ -233,11 +239,20 @@ function runCleaningNotificationCycle_(options) {
       sent += 1;
     });
 
+    const queuedReports = dryRun
+      ? 0
+      : queueAutomaticCleaningReports_(state, config, now);
     saveNotificationState_(state);
     console.log(
-      `ตรวจสำเร็จ ${snapshot.checkedCount}/${CLEANING_MESSENGER.TOTAL_ZONES} เขต; ส่ง ${sent} เหตุการณ์`
+      `ตรวจสำเร็จ ${snapshot.checkedCount}/${CLEANING_MESSENGER.TOTAL_ZONES} เขต; ` +
+        `ส่ง ${sent} เหตุการณ์; เข้าคิว PDF ${queuedReports} รายการ`
     );
-    return { status: "ok", sent, checkedCount: snapshot.checkedCount };
+    return {
+      status: "ok",
+      sent,
+      queuedReports,
+      checkedCount: snapshot.checkedCount,
+    };
   } finally {
     lock.releaseLock();
   }
@@ -264,6 +279,19 @@ function getCleaningMessengerConfig_() {
     ),
     commandsAdminOnly: !/^false$/i.test(
       properties.getProperty("MESSENGER_COMMANDS_ADMIN_ONLY") || "true"
+    ),
+    autoDailyPdf: !/^false$/i.test(
+      properties.getProperty("SEND_DAILY_PDF_REPORT") || "true"
+    ),
+    autoMonthlyPdf: !/^false$/i.test(
+      properties.getProperty("SEND_MONTHLY_PDF_REPORT") || "true"
+    ),
+    reportMaxImages: Math.max(
+      1,
+      Math.min(
+        10,
+        Number(properties.getProperty("CLEANING_REPORT_MAX_IMAGES") || "6") || 6
+      )
     ),
     dataUrl:
       properties.getProperty("CLEANING_DATA_URL") ||
@@ -940,6 +968,781 @@ function previewCouncilDutyForToday() {
 }
 
 /**
+ * PDF report jobs are queued so the Meta webhook can answer quickly. The
+ * one-time trigger creates the report, stores it in Drive, then sends the PDF
+ * back to the approved Messenger recipient.
+ */
+function enqueueCleaningReportJob_(type, senderId, config, options) {
+  const properties = PropertiesService.getScriptProperties();
+  const raw = properties.getProperty(CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY);
+  let queue = [];
+  try {
+    queue = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(queue)) queue = [];
+  } catch (error) {
+    queue = [];
+  }
+
+  const messageId = String((options && options.messageId) || "");
+  if (messageId && queue.some((item) => item.messageId === messageId)) {
+    return false;
+  }
+
+  const now = new Date();
+  const dateKey =
+    (options && options.dateKey) || dateKeyInTimeZone_(now, config.timeZone);
+  const monthKey =
+    (options && options.monthKey) || String(dateKey).slice(0, 7);
+  queue.push({
+    id: Utilities.getUuid(),
+    type,
+    senderId: String(senderId),
+    dateKey,
+    monthKey,
+    messageId,
+    messagingType: String(
+      (options && options.messagingType) || "RESPONSE"
+    ).toUpperCase(),
+    requestedAt: now.toISOString(),
+  });
+  queue = queue.slice(-CLEANING_MESSENGER.MAX_REPORT_QUEUE_ITEMS);
+  properties.setProperty(
+    CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY,
+    JSON.stringify(queue)
+  );
+  ensureCleaningReportJobTrigger_();
+  return true;
+}
+
+function ensureCleaningReportJobTrigger_() {
+  const exists = ScriptApp.getProjectTriggers().some(
+    (trigger) =>
+      trigger.getHandlerFunction() === CLEANING_MESSENGER.REPORT_TRIGGER_HANDLER
+  );
+  if (!exists) {
+    ScriptApp.newTrigger(CLEANING_MESSENGER.REPORT_TRIGGER_HANDLER)
+      .timeBased()
+      .after(1000)
+      .create();
+  }
+}
+
+function removeCleaningReportJobTriggers_() {
+  ScriptApp.getProjectTriggers().forEach((trigger) => {
+    if (
+      trigger.getHandlerFunction() === CLEANING_MESSENGER.REPORT_TRIGGER_HANDLER
+    ) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+function processCleaningReportJobs() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return;
+
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    const raw = properties.getProperty(
+      CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY
+    );
+    let queue = [];
+    try {
+      queue = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(queue)) queue = [];
+    } catch (error) {
+      queue = [];
+    }
+
+    const jobs = queue.splice(0, 2);
+    properties.setProperty(
+      CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY,
+      JSON.stringify(queue)
+    );
+    const config = getCleaningMessengerConfig_();
+    jobs.forEach((job) => {
+      try {
+        processCleaningReportJob_(job, config);
+      } catch (error) {
+        console.error(
+          `สร้างรายงาน PDF ไม่สำเร็จ: ${(error && error.stack) || error}`
+        );
+        try {
+          sendMessengerReply_(
+            "⚠️ สร้างรายงาน PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+            job.senderId,
+            config
+          );
+        } catch (sendError) {
+          console.error(`ส่งข้อความแจ้งข้อผิดพลาดไม่สำเร็จ: ${sendError}`);
+        }
+      }
+    });
+
+    removeCleaningReportJobTriggers_();
+    if (queue.length) ensureCleaningReportJobTrigger_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function processCleaningReportJob_(job, config) {
+  const report =
+    job.type === "monthly_pdf"
+      ? createMonthlyCleaningReportPdf_(config, job.monthKey)
+      : createDailyCleaningReportPdf_(config, job.dateKey);
+  const reportConfig = Object.assign({}, config, {
+    messagingType:
+      job.messagingType === "UPDATE" ? "UPDATE" : "RESPONSE",
+  });
+
+  let attachmentSent = false;
+  try {
+    sendMessengerPdfAttachmentToOne_(
+      report.blob,
+      job.senderId,
+      reportConfig
+    );
+    attachmentSent = true;
+  } catch (error) {
+    console.error(`ส่ง PDF เป็นไฟล์แนบไม่สำเร็จ ใช้ลิงก์ Drive แทน: ${error}`);
+  }
+
+  const lines = [
+    attachmentSent ? "✅ จัดทำและส่งไฟล์ PDF แล้ว" : "✅ จัดทำไฟล์ PDF แล้ว",
+    report.title,
+    "",
+    report.summary,
+    "",
+    "📄 เปิดไฟล์จาก Google Drive",
+    report.url,
+  ];
+  sendMessengerTextToOne_(lines.join("\n"), job.senderId, reportConfig);
+}
+
+function createDailyCleaningReportPdf_(config, dateKey) {
+  const records = fetchCleaningRecords_(config);
+  const snapshot = buildCleaningSnapshotForDate_(records, dateKey, config);
+  const reportFolder = getCleaningReportFolder_();
+  const timestamp = Utilities.formatDate(
+    new Date(),
+    config.timeZone,
+    "HHmmss"
+  );
+  const fileName = `cleaning-daily-${dateKey}-${timestamp}.pdf`;
+  const doc = DocumentApp.create(`temp-${fileName}`);
+  const sourceFile = DriveApp.getFileById(doc.getId());
+
+  try {
+    const body = doc.getBody();
+    appendReportTitle_(
+      body,
+      "รายงานการตรวจความสะอาดประจำวัน",
+      `${config.schoolName}\n${thaiDateLabel_(dateKey)}`
+    );
+    const percent = Math.round(
+      (snapshot.checkedCount / CLEANING_MESSENGER.TOTAL_ZONES) * 100
+    );
+    body.appendParagraph(
+      `สรุปผล: ตรวจแล้ว ${snapshot.checkedCount}/9 เขต (${percent}%) | ` +
+        `ยังไม่รายงาน ${snapshot.missingZones.length} เขต | ` +
+        `ไม่ผ่าน ${snapshot.failedRecords.length} เขต`
+    );
+
+    const rows = [
+      ["เขต", "ผู้รับผิดชอบ", "คะแนน", "สถานะ", "หมายเหตุ"],
+    ];
+    CLEANING_MESSENGER.ZONES.forEach((zone) => {
+      const record = snapshot.recordsByZone[zone.id];
+      const duty = snapshot.dutyByZone[zone.id];
+      rows.push([
+        `${zone.name} ${zone.className}`,
+        formatCouncilDutyLine_(duty).replace("ผู้รับผิดชอบ: ", ""),
+        record && record.score !== "" && record.score !== undefined
+          ? `${record.score}/3`
+          : "ยังไม่รายงาน",
+        record ? thaiInspectionStatus_(record.status) : "—",
+        record ? String(record.notes || "—") : "—",
+      ]);
+    });
+    const table = body.appendTable(rows);
+    styleReportTableHeader_(table);
+
+    body.appendParagraph("ภาพประกอบการตรวจ").setHeading(
+      DocumentApp.ParagraphHeading.HEADING1
+    );
+    const imageRecords = CLEANING_MESSENGER.ZONES.map(
+      (zone) => snapshot.recordsByZone[zone.id]
+    ).filter(Boolean);
+    appendReportImages_(
+      body,
+      imageRecords,
+      config.reportMaxImages,
+      config
+    );
+    appendReportFooter_(body, config);
+    doc.saveAndClose();
+
+    const blob = sourceFile.getAs(MimeType.PDF).setName(fileName);
+    const pdfFile = reportFolder.createFile(blob);
+    return {
+      title: `รายงานประจำวัน ${thaiDateLabel_(dateKey)}`,
+      summary: `ตรวจแล้ว ${snapshot.checkedCount}/9 เขต — ${percent}%`,
+      url: pdfFile.getUrl(),
+      blob: pdfFile.getBlob().setName(fileName),
+      fileId: pdfFile.getId(),
+    };
+  } finally {
+    try {
+      sourceFile.setTrashed(true);
+    } catch (error) {
+      console.error(`ลบเอกสารชั่วคราวไม่สำเร็จ: ${error}`);
+    }
+  }
+}
+
+function createMonthlyCleaningReportPdf_(config, monthKey) {
+  const records = fetchCleaningRecords_(config);
+  const summary = buildMonthlyCleaningSummary_(records, monthKey, config);
+  const reportFolder = getCleaningReportFolder_();
+  const timestamp = Utilities.formatDate(
+    new Date(),
+    config.timeZone,
+    "HHmmss"
+  );
+  const fileName = `cleaning-monthly-${monthKey}-${timestamp}.pdf`;
+  const doc = DocumentApp.create(`temp-${fileName}`);
+  const sourceFile = DriveApp.getFileById(doc.getId());
+
+  try {
+    const body = doc.getBody();
+    appendReportTitle_(
+      body,
+      "รายงานการตรวจความสะอาดประจำเดือน",
+      `${config.schoolName}\n${thaiMonthYearLabel_(monthKey)}`
+    );
+    body.appendParagraph(
+      `ความครอบคลุม ${summary.coveragePercent}% | ` +
+        `วันที่ตรวจครบ ${summary.completeDays} วัน | ` +
+        `ตรวจบางส่วน ${summary.partialDays} วัน | ` +
+        `ไม่มีข้อมูล ${summary.noDataDays} วัน | ` +
+        `รายการไม่ผ่าน ${summary.failedRecords.length} รายการ`
+    );
+
+    body.appendParagraph("สรุปรายวัน").setHeading(
+      DocumentApp.ParagraphHeading.HEADING1
+    );
+    const dayRows = [["วันที่", "ตรวจแล้ว", "ไม่ผ่าน", "ความครอบคลุม"]];
+    summary.days.forEach((day) => {
+      dayRows.push([
+        day.dateKey,
+        `${day.checkedCount}/9`,
+        String(day.failedCount),
+        `${Math.round((day.checkedCount / 9) * 100)}%`,
+      ]);
+    });
+    styleReportTableHeader_(body.appendTable(dayRows));
+
+    body.appendParagraph("ผลรายเขต").setHeading(
+      DocumentApp.ParagraphHeading.HEADING1
+    );
+    const zoneRows = [["เขต", "รายงาน", "ไม่ผ่าน", "คะแนนเฉลี่ย"]];
+    summary.zoneStats.forEach((item) => {
+      zoneRows.push([
+        `${item.zone.name} ${item.zone.className}`,
+        `${item.reportedDays}/${summary.workdayCount} วัน`,
+        `${item.failedCount} ครั้ง`,
+        item.averageScore === null ? "—" : item.averageScore.toFixed(2),
+      ]);
+    });
+    styleReportTableHeader_(body.appendTable(zoneRows));
+
+    body.appendParagraph("เหตุการณ์และหมายเหตุสำคัญ").setHeading(
+      DocumentApp.ParagraphHeading.HEADING1
+    );
+    if (!summary.notableRecords.length) {
+      body.appendParagraph("ไม่พบรายการไม่ผ่านหรือหมายเหตุเพิ่มเติม");
+    } else {
+      summary.notableRecords.slice(0, 30).forEach((record) => {
+        const zone = CLEANING_MESSENGER.ZONES.find(
+          (item) => item.id === Number(record.zoneId)
+        );
+        body.appendListItem(
+          `${normalizeRecordDate_(record.date, config.timeZone)} — ` +
+            `${zone ? `${zone.name} ${zone.className}` : `เขต ${record.zoneId}`} — ` +
+            `คะแนน ${record.score}/3 — ${String(record.notes || "ไม่มีหมายเหตุ")}`
+        );
+      });
+    }
+
+    body.appendParagraph("ภาพประกอบที่คัดเลือก").setHeading(
+      DocumentApp.ParagraphHeading.HEADING1
+    );
+    appendReportImages_(
+      body,
+      summary.representativeRecords,
+      Math.min(config.reportMaxImages + 2, 10),
+      config
+    );
+    appendReportFooter_(body, config);
+    doc.saveAndClose();
+
+    const blob = sourceFile.getAs(MimeType.PDF).setName(fileName);
+    const pdfFile = reportFolder.createFile(blob);
+    return {
+      title: `รายงานประจำเดือน ${thaiMonthYearLabel_(monthKey)}`,
+      summary: `ความครอบคลุม ${summary.coveragePercent}% — ตรวจครบ ${summary.completeDays} วัน`,
+      url: pdfFile.getUrl(),
+      blob: pdfFile.getBlob().setName(fileName),
+      fileId: pdfFile.getId(),
+    };
+  } finally {
+    try {
+      sourceFile.setTrashed(true);
+    } catch (error) {
+      console.error(`ลบเอกสารชั่วคราวไม่สำเร็จ: ${error}`);
+    }
+  }
+}
+
+function buildCleaningSnapshotForDate_(records, dateKey, config) {
+  const latestByZone = {};
+  records.forEach((record, index) => {
+    const zoneId = Number(record.zoneId);
+    if (
+      !Number.isInteger(zoneId) ||
+      zoneId < 1 ||
+      zoneId > 9 ||
+      normalizeRecordDate_(record.date, config.timeZone) !== dateKey
+    ) {
+      return;
+    }
+    const candidate = Object.assign({}, record, { _sourceIndex: index });
+    const current = latestByZone[zoneId];
+    if (!current || compareRecordOrder_(candidate, current) >= 0) {
+      latestByZone[zoneId] = candidate;
+    }
+  });
+  const checkedZoneIds = Object.keys(latestByZone).map(Number).sort((a, b) => a - b);
+  return {
+    dateKey,
+    recordsByZone: latestByZone,
+    checkedZoneIds,
+    checkedCount: checkedZoneIds.length,
+    missingZones: CLEANING_MESSENGER.ZONES.filter(
+      (zone) => !latestByZone[zone.id]
+    ),
+    dutyByZone: getCouncilDutyByZone_(dateKey),
+    failedRecords: checkedZoneIds
+      .map((zoneId) => latestByZone[zoneId])
+      .filter(isFailedRecord_),
+  };
+}
+
+function buildMonthlyCleaningSummary_(records, monthKey, config) {
+  const latestByDateZone = {};
+  records.forEach((record, index) => {
+    const dateKey = normalizeRecordDate_(record.date, config.timeZone);
+    const zoneId = Number(record.zoneId);
+    if (
+      String(dateKey).slice(0, 7) !== monthKey ||
+      !Number.isInteger(zoneId) ||
+      zoneId < 1 ||
+      zoneId > 9
+    ) {
+      return;
+    }
+    const key = `${dateKey}|${zoneId}`;
+    const candidate = Object.assign({}, record, {
+      _sourceIndex: index,
+      _dateKey: dateKey,
+    });
+    if (!latestByDateZone[key] || compareRecordOrder_(candidate, latestByDateZone[key]) >= 0) {
+      latestByDateZone[key] = candidate;
+    }
+  });
+
+  const workdays = listSchoolWorkdaysInMonth_(monthKey, config.timeZone);
+  const values = Object.keys(latestByDateZone).map(
+    (key) => latestByDateZone[key]
+  );
+  const days = workdays.map((dateKey) => {
+    const dayRecords = values.filter((record) => record._dateKey === dateKey);
+    return {
+      dateKey,
+      checkedCount: dayRecords.length,
+      failedCount: dayRecords.filter(isFailedRecord_).length,
+    };
+  });
+  const checkedSlots = days.reduce((sum, day) => sum + day.checkedCount, 0);
+  const totalSlots = workdays.length * CLEANING_MESSENGER.TOTAL_ZONES;
+  const failedRecords = values.filter(isFailedRecord_);
+  const notableRecords = values
+    .filter(
+      (record) => isFailedRecord_(record) || String(record.notes || "").trim()
+    )
+    .sort((left, right) => String(left._dateKey).localeCompare(String(right._dateKey)));
+
+  const zoneStats = CLEANING_MESSENGER.ZONES.map((zone) => {
+    const zoneRecords = values.filter(
+      (record) => Number(record.zoneId) === zone.id
+    );
+    const scores = zoneRecords
+      .map((record) => Number(record.score))
+      .filter(Number.isFinite);
+    return {
+      zone,
+      reportedDays: zoneRecords.length,
+      failedCount: zoneRecords.filter(isFailedRecord_).length,
+      averageScore: scores.length
+        ? scores.reduce((sum, score) => sum + score, 0) / scores.length
+        : null,
+    };
+  });
+
+  const withImages = notableRecords
+    .concat(values.slice().reverse())
+    .filter((record) => Array.isArray(record.images) && record.images.length);
+  const seen = {};
+  const representativeRecords = withImages.filter((record) => {
+    const key = String(record.id || `${record._dateKey}|${record.zoneId}`);
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+
+  return {
+    monthKey,
+    workdayCount: workdays.length,
+    checkedSlots,
+    totalSlots,
+    coveragePercent: totalSlots
+      ? Math.round((checkedSlots / totalSlots) * 100)
+      : 0,
+    completeDays: days.filter((day) => day.checkedCount === 9).length,
+    partialDays: days.filter(
+      (day) => day.checkedCount > 0 && day.checkedCount < 9
+    ).length,
+    noDataDays: days.filter((day) => day.checkedCount === 0).length,
+    days,
+    failedRecords,
+    notableRecords,
+    zoneStats,
+    representativeRecords,
+  };
+}
+
+function listSchoolWorkdaysInMonth_(monthKey, timeZone) {
+  const parts = String(monthKey).split("-").map(Number);
+  const lastDay = new Date(Date.UTC(parts[0], parts[1], 0)).getUTCDate();
+  const todayKey = dateKeyInTimeZone_(new Date(), timeZone);
+  const isCurrentMonth = String(todayKey).slice(0, 7) === monthKey;
+  const endDay = isCurrentMonth ? Number(todayKey.slice(8, 10)) : lastDay;
+  const days = [];
+  for (let day = 1; day <= endDay; day += 1) {
+    const date = new Date(Date.UTC(parts[0], parts[1] - 1, day));
+    const weekday = date.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) {
+      days.push(`${monthKey}-${String(day).padStart(2, "0")}`);
+    }
+  }
+  return days;
+}
+
+function buildTodaySituationMessage_(snapshot, config, now) {
+  const lines = [
+    "🧭 สถานการณ์การตรวจความสะอาดวันนี้",
+    "",
+    thaiDateLabel_(snapshot.dateKey),
+    `ข้อมูล ณ เวลา ${Utilities.formatDate(now, config.timeZone, "HH:mm")} น.`,
+    "",
+  ];
+  const notable = snapshot.checkedZoneIds
+    .map((zoneId) => snapshot.recordsByZone[zoneId])
+    .filter(
+      (record) => isFailedRecord_(record) || String(record.notes || "").trim()
+    );
+  if (!notable.length) {
+    lines.push("✅ ยังไม่พบเหตุการณ์ผิดปกติหรือหมายเหตุสำคัญ");
+  } else {
+    lines.push(`พบเหตุการณ์หรือหมายเหตุ ${notable.length} รายการ`);
+    notable.forEach((record) => {
+      const zone = CLEANING_MESSENGER.ZONES.find(
+        (item) => item.id === Number(record.zoneId)
+      );
+      lines.push(
+        "",
+        `• ${zone ? `${zone.name} · ${zone.className}` : `เขต ${record.zoneId}`}`,
+        `  คะแนน ${record.score}/3 · ${thaiInspectionStatus_(record.status)}`,
+        `  ${String(record.notes || "ไม่มีหมายเหตุ")}`
+      );
+    });
+  }
+  if (snapshot.missingZones.length) {
+    lines.push(
+      "",
+      `⚠️ ยังไม่รายงาน ${snapshot.missingZones.length} เขต`,
+      ...formatZoneDutyLines_(snapshot.missingZones, snapshot.dutyByZone)
+    );
+  }
+  lines.push("", `🔗 ${config.appUrl}`);
+  return lines.join("\n");
+}
+
+function buildMonthlyCleaningSummaryMessage_(summary, config) {
+  const lines = [
+    `📊 สรุปผลประจำเดือน ${thaiMonthYearLabel_(summary.monthKey)}`,
+    "",
+    `ความครอบคลุม ${summary.coveragePercent}%`,
+    `ตรวจครบ 9 เขต: ${summary.completeDays} วัน`,
+    `ตรวจบางส่วน: ${summary.partialDays} วัน`,
+    `ไม่มีข้อมูล: ${summary.noDataDays} วัน`,
+    `รายการไม่ผ่าน: ${summary.failedRecords.length} รายการ`,
+    "",
+    "ผลรายเขต",
+  ];
+  summary.zoneStats.forEach((item) => {
+    lines.push(
+      `• ${item.zone.name} ${item.zone.className}: ` +
+        `${item.reportedDays}/${summary.workdayCount} วัน` +
+        `${item.failedCount ? ` · ไม่ผ่าน ${item.failedCount}` : ""}`
+    );
+  });
+  lines.push("", "พิมพ์ “PDF เดือนนี้” เพื่อรับรายงานฉบับเต็มพร้อมภาพ");
+  lines.push(`🔗 ${config.appUrl}`);
+  return lines.join("\n");
+}
+
+function getCleaningReportFolder_() {
+  const properties = PropertiesService.getScriptProperties();
+  const existingId = properties.getProperty("CLEANING_REPORT_FOLDER_ID");
+  if (existingId) {
+    try {
+      return DriveApp.getFolderById(existingId);
+    } catch (error) {
+      console.error(`เปิดโฟลเดอร์รายงานเดิมไม่สำเร็จ: ${error}`);
+    }
+  }
+  const folder = DriveApp.createFolder("Cleaning System Reports");
+  properties.setProperty("CLEANING_REPORT_FOLDER_ID", folder.getId());
+  return folder;
+}
+
+function appendReportTitle_(body, title, subtitle) {
+  body.appendParagraph(title)
+    .setHeading(DocumentApp.ParagraphHeading.TITLE)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendParagraph(subtitle)
+    .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendHorizontalRule();
+}
+
+function styleReportTableHeader_(table) {
+  if (!table || table.getNumRows() < 1) return;
+  const row = table.getRow(0);
+  for (let index = 0; index < row.getNumCells(); index += 1) {
+    const cell = row.getCell(index);
+    cell.setBackgroundColor("#D1FAE5");
+    try {
+      cell.getChild(0).asParagraph().editAsText().setBold(true);
+    } catch (error) {
+      console.error(`จัดรูปแบบหัวตารางไม่สำเร็จ: ${error}`);
+    }
+  }
+}
+
+function appendReportImages_(body, records, maxImages, config) {
+  let appended = 0;
+  records.forEach((record) => {
+    if (appended >= maxImages) return;
+    const images = Array.isArray(record.images) ? record.images : [];
+    images.forEach((url) => {
+      if (appended >= maxImages) return;
+      const blob = fetchReportImageBlob_(url);
+      if (!blob) return;
+      const zone = CLEANING_MESSENGER.ZONES.find(
+        (item) => item.id === Number(record.zoneId)
+      );
+      body.appendParagraph(
+        `${normalizeRecordDate_(record.date, config.timeZone)} — ` +
+          `${zone ? `${zone.name} ${zone.className}` : `เขต ${record.zoneId}`}`
+      ).setHeading(DocumentApp.ParagraphHeading.HEADING2);
+      try {
+        const image = body.appendImage(blob);
+        const width = image.getWidth();
+        const height = image.getHeight();
+        if (width > 420) {
+          image.setWidth(420);
+          image.setHeight(Math.round((height * 420) / width));
+        }
+        appended += 1;
+      } catch (error) {
+        console.error(`เพิ่มภาพลงรายงานไม่สำเร็จ: ${error}`);
+      }
+    });
+  });
+  if (!appended) body.appendParagraph("ไม่มีภาพประกอบที่เปิดใช้งานได้");
+}
+
+function fetchReportImageBlob_(url) {
+  if (!/^https?:\/\//i.test(String(url || ""))) return null;
+  const options = {
+    method: "get",
+    followRedirects: true,
+    muteHttpExceptions: true,
+  };
+  if (/googleusercontent\.com|google\.com|googleapis\.com/i.test(url)) {
+    options.headers = { Authorization: `Bearer ${ScriptApp.getOAuthToken()}` };
+  }
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
+      return null;
+    }
+    const blob = response.getBlob();
+    return /^image\//i.test(blob.getContentType()) ? blob : null;
+  } catch (error) {
+    console.error(`โหลดภาพรายงานไม่สำเร็จ: ${error}`);
+    return null;
+  }
+}
+
+function appendReportFooter_(body, config) {
+  body.appendHorizontalRule();
+  const footer = body.appendParagraph(
+    `สร้างโดยระบบตรวจเวรทำความสะอาด ${config.schoolName}\n${config.appUrl}`
+  );
+  footer.editAsText().setForegroundColor("#64748B");
+}
+
+function sendMessengerPdfAttachmentToOne_(pdfBlob, recipientId, config) {
+  const uploadEndpoint = `https://graph.facebook.com/${encodeURIComponent(
+    config.graphVersion
+  )}/${encodeURIComponent(config.pageId)}/message_attachments`;
+  const uploadResponse = UrlFetchApp.fetch(uploadEndpoint, {
+    method: "post",
+    headers: { Authorization: `Bearer ${config.pageAccessToken}` },
+    payload: {
+      message: JSON.stringify({
+        attachment: { type: "file", payload: { is_reusable: true } },
+      }),
+      filedata: pdfBlob,
+    },
+    muteHttpExceptions: true,
+  });
+  const uploadCode = uploadResponse.getResponseCode();
+  const uploadBody = uploadResponse.getContentText();
+  if (uploadCode < 200 || uploadCode >= 300) {
+    throw new Error(`อัปโหลด PDF ไป Meta ไม่สำเร็จ HTTP ${uploadCode}: ${uploadBody}`);
+  }
+  const uploaded = JSON.parse(uploadBody);
+  if (!uploaded.attachment_id) {
+    throw new Error("Meta ไม่ส่ง attachment_id กลับมา");
+  }
+
+  const endpoint = `https://graph.facebook.com/${encodeURIComponent(
+    config.graphVersion
+  )}/${encodeURIComponent(config.pageId)}/messages`;
+  const response = UrlFetchApp.fetch(endpoint, {
+    method: "post",
+    contentType: "application/json",
+    headers: { Authorization: `Bearer ${config.pageAccessToken}` },
+    payload: JSON.stringify({
+      recipient: { id: recipientId },
+      messaging_type: config.messagingType,
+      message: {
+        attachment: {
+          type: "file",
+          payload: { attachment_id: uploaded.attachment_id },
+        },
+      },
+    }),
+    muteHttpExceptions: true,
+  });
+  if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
+    throw new Error(
+      `ส่ง PDF ไป Messenger ไม่สำเร็จ HTTP ${response.getResponseCode()}: ${response.getContentText()}`
+    );
+  }
+}
+
+function queueAutomaticCleaningReports_(state, config, now) {
+  const dateKey = dateKeyInTimeZone_(now, config.timeZone);
+  const currentTime = Utilities.formatDate(now, config.timeZone, "HH:mm");
+  let queued = 0;
+
+  if (
+    config.autoDailyPdf &&
+    !isWeekendDateKey_(dateKey) &&
+    compareClockTimes_(currentTime, config.endOfDayTime) >= 0
+  ) {
+    const key = `${dateKey}|automatic_daily_pdf`;
+    if (!state.sent[key]) {
+      config.adminRecipientIds.forEach((recipientId) => {
+        if (
+          enqueueCleaningReportJob_("daily_pdf", recipientId, config, {
+            dateKey,
+            messagingType: "UPDATE",
+          })
+        ) {
+          queued += 1;
+        }
+      });
+      state.sent[key] = now.toISOString();
+    }
+  }
+
+  if (
+    config.autoMonthlyPdf &&
+    isFirstSchoolWorkdayOfMonth_(dateKey) &&
+    compareClockTimes_(currentTime, "09:00") >= 0
+  ) {
+    const previousMonthKey = shiftMonthKey_(String(dateKey).slice(0, 7), -1);
+    const key = `${previousMonthKey}|automatic_monthly_pdf`;
+    if (!state.sent[key]) {
+      config.adminRecipientIds.forEach((recipientId) => {
+        if (
+          enqueueCleaningReportJob_("monthly_pdf", recipientId, config, {
+            monthKey: previousMonthKey,
+            messagingType: "UPDATE",
+          })
+        ) {
+          queued += 1;
+        }
+      });
+      state.sent[key] = now.toISOString();
+    }
+  }
+  return queued;
+}
+
+function isFirstSchoolWorkdayOfMonth_(dateKey) {
+  const parts = String(dateKey).split("-").map(Number);
+  for (let day = 1; day <= parts[2]; day += 1) {
+    const weekday = new Date(Date.UTC(parts[0], parts[1] - 1, day)).getUTCDay();
+    if (weekday !== 0 && weekday !== 6) return day === parts[2];
+  }
+  return false;
+}
+
+/** Manual tests from the Apps Script editor. */
+function createDailyCleaningPdfNow() {
+  const config = getCleaningMessengerConfig_();
+  const dateKey = dateKeyInTimeZone_(new Date(), config.timeZone);
+  const report = createDailyCleaningReportPdf_(config, dateKey);
+  console.log(report.url);
+  return report.url;
+}
+
+function createMonthlyCleaningPdfNow() {
+  const config = getCleaningMessengerConfig_();
+  const monthKey = dateKeyInTimeZone_(new Date(), config.timeZone).slice(0, 7);
+  const report = createMonthlyCleaningReportPdf_(config, monthKey);
+  console.log(report.url);
+  return report.url;
+}
+
+/**
  * Interactive Messenger commands for approved recipients.
  *
  * Supported examples:
@@ -950,7 +1753,7 @@ function previewCouncilDutyForToday() {
  * - ตารางเดือนนี้
  * - เมนู
  */
-function handleCleaningMessengerCommand_(text, senderId, config) {
+function handleCleaningMessengerCommand_(text, senderId, config, metadata) {
   if (!config.commandsEnabled) return false;
   if (!isApprovedMessengerCommandSender_(senderId, config)) {
     console.log(`ข้ามคำสั่งจาก PSID ที่ยังไม่ได้รับอนุญาต: ${senderId}`);
@@ -958,6 +1761,25 @@ function handleCleaningMessengerCommand_(text, senderId, config) {
   }
 
   const command = parseCleaningMessengerCommand_(text);
+  if (command.type === "daily_pdf" || command.type === "monthly_pdf") {
+    const queued = enqueueCleaningReportJob_(
+      command.type,
+      senderId,
+      config,
+      {
+        messageId: metadata && metadata.messageId,
+        messagingType: "RESPONSE",
+      }
+    );
+    sendMessengerReply_(
+      queued
+        ? "⏳ รับคำขอแล้ว กำลังจัดทำรายงาน PDF พร้อมภาพ ระบบจะส่งไฟล์ให้ภายในประมาณ 1–2 นาที"
+        : "⏳ คำขอนี้อยู่ระหว่างจัดทำ กรุณารอสักครู่",
+      senderId,
+      config
+    );
+    return true;
+  }
   let messages;
 
   try {
@@ -1006,6 +1828,38 @@ function parseCleaningMessengerCommand_(text) {
   }
 
   if (
+    /(pdf.*(วันนี้|ประจำวัน)|(วันนี้|ประจำวัน).*pdf|ไฟล์.*(วันนี้|ประจำวัน))/i.test(
+      normalized
+    )
+  ) {
+    return { type: "daily_pdf" };
+  }
+
+  if (
+    /(pdf.*(เดือนนี้|ประจำเดือน)|(เดือนนี้|ประจำเดือน).*pdf|ไฟล์.*เดือนนี้)/i.test(
+      normalized
+    )
+  ) {
+    return { type: "monthly_pdf" };
+  }
+
+  if (
+    /(สถานการณ์วันนี้|เหตุการณ์วันนี้|ปัญหาวันนี้|วันนี้.*เป็นอย่างไร|วันนี้.*มีอะไร|สภาพ.*วันนี้)/.test(
+      normalized
+    )
+  ) {
+    return { type: "today_situation" };
+  }
+
+  if (
+    /(สรุป.*เดือนนี้|รายงานเดือนนี้|เดือนนี้.*เป็นอย่างไร|สถิติเดือนนี้|ผล.*เดือนนี้)/.test(
+      normalized
+    )
+  ) {
+    return { type: "month_summary" };
+  }
+
+  if (
     /(ตารางเดือนนี้|ตารางทั้งเดือน|ตารางทุกสัปดาห์|ตารางตรวจเวรแต่ละสัปดาห์|เวรทั้งเดือน)/.test(
       normalized
     )
@@ -1023,7 +1877,7 @@ function parseCleaningMessengerCommand_(text) {
   }
 
   if (
-    /(ตารางสัปดาห์นี้|เวรสัปดาห์นี้|ตารางตรวจเวร|ตารางเวร|ขอตาราง)/.test(
+    /(ตารางสัปดาห์นี้|เวรสัปดาห์นี้|เวรวันนี้|เวรประจำวัน|ใครตรวจวันนี้|ผู้รับผิดชอบวันนี้|ตารางตรวจเวร|ตารางเวร|ขอตาราง)/.test(
       normalized
     )
   ) {
@@ -1048,6 +1902,21 @@ function buildCleaningMessengerCommandReplies_(command, config) {
   if (command.type === "today") {
     const snapshot = getCleaningSnapshot_(config, now);
     return [buildOnDemandCleaningStatusMessage_(snapshot, config, now)];
+  }
+
+  if (command.type === "today_situation") {
+    const snapshot = getCleaningSnapshot_(config, now);
+    return [buildTodaySituationMessage_(snapshot, config, now)];
+  }
+
+  if (command.type === "month_summary") {
+    const records = fetchCleaningRecords_(config);
+    const summary = buildMonthlyCleaningSummary_(
+      records,
+      String(dateKey).slice(0, 7),
+      config
+    );
+    return [buildMonthlyCleaningSummaryMessage_(summary, config)];
   }
 
   if (command.type === "current_week") {
@@ -1281,10 +2150,14 @@ function buildCleaningMessengerHelpMessage_() {
     "",
     "พิมพ์ข้อความต่อไปนี้ได้เลย",
     "• สรุปวันนี้",
-    "• ตารางสัปดาห์นี้",
+    "• สถานการณ์วันนี้",
+    "• เวรวันนี้",
     "• ตารางสัปดาห์หน้า",
     "• ตารางสัปดาห์ 1",
     "• ตารางเดือนนี้",
+    "• สรุปเดือนนี้",
+    "• PDF วันนี้",
+    "• PDF เดือนนี้",
     "• เมนู",
   ].join("\n");
 }
@@ -1356,6 +2229,7 @@ function maybeHandleMetaWebhookPost(e) {
           incomingCommands.push({
             senderId,
             text: event.message.text,
+            messageId: String(event.message.mid || ""),
           });
         }
       }
@@ -1368,7 +2242,8 @@ function maybeHandleMetaWebhookPost(e) {
       handleCleaningMessengerCommand_(
         command.text,
         command.senderId,
-        config
+        config,
+        { messageId: command.messageId }
       );
     } catch (error) {
       console.error(
