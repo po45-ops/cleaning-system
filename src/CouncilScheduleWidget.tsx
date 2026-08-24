@@ -59,7 +59,7 @@ type SyncNotice = {
 const STORAGE_KEY = "cleaning_council_schedule_v1";
 const AUTH_KEY = "cleaning_auth_user";
 const SCHEDULE_API_URL =
-  "https://script.google.com/macros/s/AKfycbyTSx3ggaJfXtYd_rQ67FoI5pPb8y_LXcTAm6RiSnkf34uiZL5GZBStGVMXyGCHQ5JfEA/exec";
+  "https://script.google.com/macros/s/AKfycbwfmqSlIqJ0-2CoAQ1Uv7nrL47x3zsqToUWP0brNiHBnJGFIvz450w33ANBmltvOjNPTg/exec";
 
 const MONTHS = [
   "มกราคม",
