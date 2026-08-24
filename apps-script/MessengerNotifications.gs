@@ -54,6 +54,8 @@ function initializeCleaningMessengerConfig() {
     META_GRAPH_API_VERSION: CLEANING_MESSENGER.DEFAULT_GRAPH_VERSION,
     MESSENGER_ENABLED: "false",
     MESSENGER_MESSAGING_TYPE: "UPDATE",
+    MESSENGER_COMMANDS_ENABLED: "true",
+    MESSENGER_COMMANDS_ADMIN_ONLY: "true",
     SCHOOL_NAME: "โรงเรียนไตรธารวิทยา",
   };
 
@@ -256,6 +258,12 @@ function getCleaningMessengerConfig_() {
   return {
     enabled: /^true$/i.test(
       properties.getProperty("MESSENGER_ENABLED") || "false"
+    ),
+    commandsEnabled: !/^false$/i.test(
+      properties.getProperty("MESSENGER_COMMANDS_ENABLED") || "true"
+    ),
+    commandsAdminOnly: !/^false$/i.test(
+      properties.getProperty("MESSENGER_COMMANDS_ADMIN_ONLY") || "true"
     ),
     dataUrl:
       properties.getProperty("CLEANING_DATA_URL") ||
@@ -963,6 +971,363 @@ function previewCouncilDutyForToday() {
 }
 
 /**
+ * Interactive Messenger commands for approved recipients.
+ *
+ * Supported examples:
+ * - สรุปวันนี้
+ * - ตารางสัปดาห์นี้
+ * - ตารางสัปดาห์หน้า
+ * - ตารางสัปดาห์ 1
+ * - ตารางเดือนนี้
+ * - เมนู
+ */
+function handleCleaningMessengerCommand_(text, senderId, config) {
+  if (!config.commandsEnabled) return false;
+  if (!isApprovedMessengerCommandSender_(senderId, config)) {
+    console.log(`ข้ามคำสั่งจาก PSID ที่ยังไม่ได้รับอนุญาต: ${senderId}`);
+    return false;
+  }
+
+  const command = parseCleaningMessengerCommand_(text);
+  let messages;
+
+  try {
+    messages = buildCleaningMessengerCommandReplies_(command, config);
+  } catch (error) {
+    console.error(
+      `ประมวลผลคำสั่ง Messenger ไม่สำเร็จ: ${
+        (error && error.stack) || error
+      }`
+    );
+    messages = [
+      [
+        "⚠️ ขออภัย ระบบอ่านข้อมูลไม่สำเร็จในขณะนี้",
+        "กรุณาลองใหม่อีกครั้ง หรือตรวจสอบจากหน้าเว็บ",
+        "",
+        `🔗 ${config.appUrl}`,
+      ].join("\n"),
+    ];
+  }
+
+  messages.forEach((message) => {
+    sendMessengerReply_(message, senderId, config);
+  });
+  return true;
+}
+
+function isApprovedMessengerCommandSender_(senderId, config) {
+  const allowed = config.commandsAdminOnly
+    ? config.adminRecipientIds
+    : Array.from(
+        new Set(config.recipientIds.concat(config.adminRecipientIds))
+      );
+  return allowed.indexOf(String(senderId || "")) >= 0;
+}
+
+function parseCleaningMessengerCommand_(text) {
+  const normalized = String(text || "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+  if (!normalized) return { type: "help" };
+  if (/^(เมนู|ช่วยเหลือ|คำสั่ง|help|\/help)$/.test(normalized)) {
+    return { type: "help" };
+  }
+
+  if (
+    /(ตารางเดือนนี้|ตารางทั้งเดือน|ตารางทุกสัปดาห์|ตารางตรวจเวรแต่ละสัปดาห์|เวรทั้งเดือน)/.test(
+      normalized
+    )
+  ) {
+    return { type: "month" };
+  }
+
+  const numberedWeek = normalized.match(/(?:ตาราง|เวร).*สัปดาห์(?:ที่)?\s*([1-6])/);
+  if (numberedWeek) {
+    return { type: "week_number", weekNumber: Number(numberedWeek[1]) };
+  }
+
+  if (/(ตาราง|เวร).*สัปดาห์หน้า/.test(normalized)) {
+    return { type: "next_week" };
+  }
+
+  if (
+    /(ตารางสัปดาห์นี้|เวรสัปดาห์นี้|ตารางตรวจเวร|ตารางเวร|ขอตาราง)/.test(
+      normalized
+    )
+  ) {
+    return { type: "current_week" };
+  }
+
+  if (
+    /(สรุปวันนี้|รายงานวันนี้|ตรวจวันนี้|ยังไม่ตรวจ|แจ้งเตือน.*ความสะอาด|ความสะอาด.*วันนี้)/.test(
+      normalized
+    )
+  ) {
+    return { type: "today" };
+  }
+
+  return { type: "help" };
+}
+
+function buildCleaningMessengerCommandReplies_(command, config) {
+  const now = new Date();
+  const dateKey = dateKeyInTimeZone_(now, config.timeZone);
+
+  if (command.type === "today") {
+    const snapshot = getCleaningSnapshot_(config, now);
+    return [buildOnDemandCleaningStatusMessage_(snapshot, config, now)];
+  }
+
+  if (command.type === "current_week") {
+    return [buildCouncilWeekReplyForDate_(dateKey, config)];
+  }
+
+  if (command.type === "next_week") {
+    return [buildCouncilWeekReplyForDate_(addDaysToDateKey_(dateKey, 7), config)];
+  }
+
+  if (command.type === "week_number") {
+    const schedule = loadPublishedCouncilDutySchedule_(
+      String(dateKey).slice(0, 7)
+    );
+    if (!schedule) {
+      return [buildCouncilScheduleNotFoundMessage_(config)];
+    }
+    const week = schedule.weeks[command.weekNumber - 1];
+    if (!week) {
+      return [
+        `ไม่พบสัปดาห์ที่ ${command.weekNumber} ในตารางเดือนนี้\n\nพิมพ์ “ตารางเดือนนี้” เพื่อดูสัปดาห์ที่มี`,
+      ];
+    }
+    return [buildCouncilDutyWeekMessage_(schedule, week, config)];
+  }
+
+  if (command.type === "month") {
+    const schedule = loadPublishedCouncilDutySchedule_(
+      String(dateKey).slice(0, 7)
+    );
+    if (!schedule) {
+      return [buildCouncilScheduleNotFoundMessage_(config)];
+    }
+    return [
+      `📅 ตารางตรวจเวรประจำเดือน ${thaiMonthYearLabel_(schedule.key)}\nส่งทั้งหมด ${schedule.weeks.length} สัปดาห์`,
+    ].concat(
+      schedule.weeks.map((week) =>
+        buildCouncilDutyWeekMessage_(schedule, week, config)
+      )
+    );
+  }
+
+  return [buildCleaningMessengerHelpMessage_()];
+}
+
+function buildOnDemandCleaningStatusMessage_(snapshot, config, now) {
+  const percent = Math.round(
+    (snapshot.checkedCount / CLEANING_MESSENGER.TOTAL_ZONES) * 100
+  );
+  const time = Utilities.formatDate(now, config.timeZone, "HH:mm");
+  const lines = [
+    "📋 รายงานการตรวจความสะอาดล่าสุด",
+    "",
+    thaiDateLabel_(snapshot.dateKey),
+    `ข้อมูล ณ เวลา ${time} น.`,
+    "",
+    `✅ ตรวจแล้ว ${snapshot.checkedCount}/${CLEANING_MESSENGER.TOTAL_ZONES} เขต — ${percent}%`,
+    `⚠️ ยังไม่ได้ตรวจ ${snapshot.missingZones.length} เขต`,
+    `❌ เขตไม่ผ่าน ${snapshot.failedRecords.length} เขต`,
+  ];
+
+  if (snapshot.missingZones.length) {
+    lines.push(
+      "",
+      "เขตที่ยังไม่ได้รายงาน",
+      ...formatZoneDutyLines_(snapshot.missingZones, snapshot.dutyByZone)
+    );
+  } else {
+    lines.push("", "🎉 วันนี้รายงานครบทุกเขตแล้ว");
+  }
+
+  lines.push("", "🔗 เปิดระบบตรวจความสะอาด", config.appUrl);
+  return lines.join("\n");
+}
+
+function buildCouncilWeekReplyForDate_(dateKey, config) {
+  const resolved = findPublishedCouncilDutyWeekForDate_(dateKey);
+  if (!resolved) return buildCouncilScheduleNotFoundMessage_(config);
+  return buildCouncilDutyWeekMessage_(
+    resolved.schedule,
+    resolved.week,
+    config
+  );
+}
+
+function buildCouncilDutyWeekMessage_(schedule, week, config) {
+  const dutyByZone = getCouncilDutyByZoneForWeek_(schedule, week);
+  const lines = [
+    `📅 ตารางตรวจเวร ${week.label || ""}`.trim(),
+    "",
+    formatThaiDateRange_(week.start, week.end),
+    "",
+  ];
+
+  CLEANING_MESSENGER.ZONES.forEach((zone) => {
+    lines.push(`• ${zone.name} · ${zone.className}`);
+    lines.push(`  ${formatCouncilDutyLine_(dutyByZone[zone.id])}`);
+  });
+
+  lines.push("", "🔗 เปิดระบบตรวจความสะอาด", config.appUrl);
+  return lines.join("\n");
+}
+
+function getCouncilDutyByZoneForWeek_(schedule, week) {
+  if (!schedule || !week || !Array.isArray(schedule.groups)) return {};
+  const assignments =
+    (schedule.assignments && schedule.assignments[week.id]) || {};
+  const dutyByZone = {};
+
+  schedule.groups.forEach((group, index) => {
+    const zoneId = Number(assignments[group.id]);
+    if (!Number.isInteger(zoneId) || zoneId < 1 || zoneId > 9) return;
+    dutyByZone[zoneId] = {
+      groupNumber: index + 1,
+      accountId: String(group.accountId || "").trim(),
+      members: Array.isArray(group.members)
+        ? group.members.map((name) => String(name).trim()).filter(Boolean)
+        : [],
+    };
+  });
+  return dutyByZone;
+}
+
+function loadPublishedCouncilDutySchedule_(scheduleKey) {
+  const raw = PropertiesService.getScriptProperties().getProperty(
+    councilDutySchedulePropertyKey_(scheduleKey)
+  );
+  if (!raw) return null;
+
+  try {
+    const schedule = JSON.parse(raw);
+    return schedule &&
+      schedule.published &&
+      Array.isArray(schedule.weeks) &&
+      Array.isArray(schedule.groups)
+      ? schedule
+      : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function findPublishedCouncilDutyWeekForDate_(dateKey) {
+  const monthKey = String(dateKey).slice(0, 7);
+  const scheduleKeys = [
+    monthKey,
+    shiftMonthKey_(monthKey, -1),
+    shiftMonthKey_(monthKey, 1),
+  ];
+
+  for (let index = 0; index < scheduleKeys.length; index += 1) {
+    const schedule = loadPublishedCouncilDutySchedule_(scheduleKeys[index]);
+    if (!schedule) continue;
+    const week = schedule.weeks.find(
+      (item) => dateKey >= item.start && dateKey <= item.end
+    );
+    if (week) return { schedule, week };
+  }
+  return null;
+}
+
+function shiftMonthKey_(monthKey, delta) {
+  const parts = String(monthKey).split("-").map(Number);
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1 + delta, 1));
+  return Utilities.formatDate(date, "UTC", "yyyy-MM");
+}
+
+function addDaysToDateKey_(dateKey, days) {
+  const parts = String(dateKey).split("-").map(Number);
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] + days));
+  return Utilities.formatDate(date, "UTC", "yyyy-MM-dd");
+}
+
+function formatThaiDateRange_(startKey, endKey) {
+  const start = String(startKey).split("-").map(Number);
+  const end = String(endKey).split("-").map(Number);
+  const months = [
+    "มกราคม",
+    "กุมภาพันธ์",
+    "มีนาคม",
+    "เมษายน",
+    "พฤษภาคม",
+    "มิถุนายน",
+    "กรกฎาคม",
+    "สิงหาคม",
+    "กันยายน",
+    "ตุลาคม",
+    "พฤศจิกายน",
+    "ธันวาคม",
+  ];
+
+  if (start[0] === end[0] && start[1] === end[1]) {
+    return `${start[2]}–${end[2]} ${months[start[1] - 1]} ${start[0] + 543}`;
+  }
+  return `${start[2]} ${months[start[1] - 1]} ${start[0] + 543} – ${end[2]} ${
+    months[end[1] - 1]
+  } ${end[0] + 543}`;
+}
+
+function thaiMonthYearLabel_(monthKey) {
+  const months = [
+    "มกราคม",
+    "กุมภาพันธ์",
+    "มีนาคม",
+    "เมษายน",
+    "พฤษภาคม",
+    "มิถุนายน",
+    "กรกฎาคม",
+    "สิงหาคม",
+    "กันยายน",
+    "ตุลาคม",
+    "พฤศจิกายน",
+    "ธันวาคม",
+  ];
+  const parts = String(monthKey).split("-").map(Number);
+  return `${months[parts[1] - 1]} ${parts[0] + 543}`;
+}
+
+function buildCouncilScheduleNotFoundMessage_(config) {
+  return [
+    "ℹ️ ยังไม่พบตารางเวรที่เผยแพร่สำหรับช่วงเวลานี้",
+    "กรุณาให้แอดมินเปิดตาราง จัดเวร และกด “เผยแพร่ตาราง”",
+    "",
+    `🔗 ${config.appUrl}`,
+  ].join("\n");
+}
+
+function buildCleaningMessengerHelpMessage_() {
+  return [
+    "🤖 คำสั่งระบบตรวจความสะอาด",
+    "",
+    "พิมพ์ข้อความต่อไปนี้ได้เลย",
+    "• สรุปวันนี้",
+    "• ตารางสัปดาห์นี้",
+    "• ตารางสัปดาห์หน้า",
+    "• ตารางสัปดาห์ 1",
+    "• ตารางเดือนนี้",
+    "• เมนู",
+  ].join("\n");
+}
+
+function sendMessengerReply_(message, senderId, config) {
+  const responseConfig = Object.assign({}, config, {
+    messagingType: "RESPONSE",
+  });
+  sendMessengerTextToOne_(message, senderId, responseConfig);
+}
+
+/**
  * Meta webhook routing helpers.
  *
  * Add maybeHandleMetaWebhookGet(e) at the beginning of the existing doGet(e),
@@ -1003,6 +1368,7 @@ function maybeHandleMetaWebhookPost(e) {
 
   const config = getCleaningMessengerConfig_();
   const discovered = [];
+  const incomingCommands = [];
   payload.entry.forEach((entry) => {
     (entry.messaging || []).forEach((event) => {
       const recipientId = String((event.recipient && event.recipient.id) || "");
@@ -1013,11 +1379,34 @@ function maybeHandleMetaWebhookPost(e) {
         (!config.pageId || recipientId === config.pageId)
       ) {
         discovered.push(senderId);
+        if (
+          event.message &&
+          !event.message.is_echo &&
+          typeof event.message.text === "string"
+        ) {
+          incomingCommands.push({
+            senderId,
+            text: event.message.text,
+          });
+        }
       }
     });
   });
 
   storePendingMessengerRecipients_(discovered);
+  incomingCommands.forEach((command) => {
+    try {
+      handleCleaningMessengerCommand_(
+        command.text,
+        command.senderId,
+        config
+      );
+    } catch (error) {
+      console.error(
+        `ตอบคำสั่ง Messenger ไม่สำเร็จ: ${(error && error.stack) || error}`
+      );
+    }
+  });
   return ContentService.createTextOutput("EVENT_RECEIVED").setMimeType(
     ContentService.MimeType.TEXT
   );
