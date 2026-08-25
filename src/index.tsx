@@ -5,6 +5,7 @@ import App from "./App";
 import CouncilCredentialNames from "./CouncilCredentialNames";
 import CouncilScheduleWidget from "./CouncilScheduleWidget";
 import StudentScorePrivacy from "./StudentScorePrivacy";
+import { installDateInputGuard } from "./date-input-guard";
 import { installInspectionSyncGuard } from "./inspection-sync-guard";
 import "./styles.css";
 
@@ -58,6 +59,7 @@ function DefaultLoginEntry() {
   return <App />;
 }
 
+installDateInputGuard();
 installInspectionSyncGuard();
 
 const rootElement = document.getElementById("root");
