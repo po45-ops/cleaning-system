@@ -15,6 +15,61 @@ html {
   }
 }
 
+/* Keep the top dashboard summary cards compact and easy to scan. */
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] {
+  gap: 0.75rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article {
+  padding: 1rem 1.125rem;
+  border-radius: 1rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article > div:first-child {
+  gap: 0.75rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article > div:first-child > div:first-child > p:first-child {
+  font-size: 0.8125rem;
+  line-height: 1.15rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article > div:first-child > div:first-child > p:nth-child(2) {
+  margin-top: 0.25rem;
+  font-size: 1.625rem;
+  line-height: 2rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article > div:first-child > div:first-child > p:nth-child(2) > span {
+  font-size: 0.9375rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article > div:first-child > div:first-child > p:nth-child(3) {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.1rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article > div:first-child > div:last-child {
+  padding: 0.625rem;
+  border-radius: 0.875rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article > div:first-child > div:last-child svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article:first-child > div:nth-child(2) {
+  height: 0.375rem;
+  margin-top: 0.75rem;
+}
+
+section > div[class*="bg-slate-50/50"] > div[class*="xl:grid-cols-4"] > article:first-child > p:last-child {
+  margin-top: 0.375rem;
+  font-size: 0.7rem;
+}
+
 /* Keep Thai report headings optically centered in browser, print, and PDF. */
 .formal-report-table thead tr {
   height: 52px !important;
