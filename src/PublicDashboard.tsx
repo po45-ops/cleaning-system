@@ -145,6 +145,36 @@ const StateIcon = ({ state }: { state: ZoneState }) => {
   return <AlertCircle className="h-5 w-5" />;
 };
 
+const getZonePublicSummary = (zone: ZoneSummary): string => {
+  if (zone.state === "missing") {
+    return "วันนี้ยังไม่มีการบันทึกผลการตรวจ ควรติดตามการส่งข้อมูลของพื้นที่นี้";
+  }
+
+  if (zone.state === "pending") {
+    return "ส่งผลการตรวจแล้ว และกำลังรอครูผู้ดูแลตรวจสอบ/อนุมัติ";
+  }
+
+  const score = Number(zone.record?.score);
+
+  if (zone.state === "failed" || score === 0) {
+    return "ตรวจแล้ว ได้ 0/3 อยู่ในระดับไม่ผ่าน ควรดำเนินการปรับปรุงพื้นที่";
+  }
+
+  if (score >= 3) {
+    return "ตรวจแล้ว ได้ 3/3 อยู่ในระดับดีมาก พื้นที่มีผลการตรวจอยู่ในเกณฑ์ดี";
+  }
+
+  if (score === 2) {
+    return "ตรวจแล้ว ได้ 2/3 อยู่ในระดับพอใช้ โดยรวมผ่านเกณฑ์และควรรักษาความเรียบร้อย";
+  }
+
+  if (score === 1) {
+    return "ตรวจแล้ว ได้ 1/3 อยู่ในระดับควรปรับปรุง ควรติดตามและแก้ไขความเรียบร้อยของพื้นที่";
+  }
+
+  return "ตรวจเรียบร้อยแล้ว และมีผลการตรวจบันทึกในระบบวันนี้";
+};
+
 const formatRecordTime = (record: PublicInspection): string => {
   const raw = record.updatedAt || record.timestamp || record.createdAt;
   if (!raw) return "";
@@ -470,6 +500,63 @@ export default function PublicDashboard({
                   </div>
                 );
               })}
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
+              <div className="mb-4 flex items-start gap-3">
+                <div className="rounded-xl bg-white p-2.5 text-emerald-600 shadow-sm ring-1 ring-slate-100">
+                  <FileText className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="font-black text-slate-800">สรุปสถานการณ์วันนี้ รายเขต</h4>
+                  <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+                    สรุปเป็นข้อความให้เห็นภาพของแต่ละชั้นได้ทันที โดยไม่ต้องเปิดดูรายละเอียดภายในระบบ
+                  </p>
+                </div>
+              </div>
+
+              <div className="mb-4 rounded-xl border border-emerald-100 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 shadow-sm">
+                <span className="font-black text-emerald-700">ภาพรวมวันนี้:</span>{" "}
+                ตรวจเสร็จแล้ว {dashboard.reviewed} จาก {zones.length} เขต
+                {dashboard.pending > 0 ? ` · รออนุมัติ ${dashboard.pending} เขต` : ""}
+                {dashboard.failed > 0 ? ` · ไม่ผ่าน ${dashboard.failed} เขต` : ""}
+                {dashboard.missing > 0 ? ` · ยังไม่บันทึก ${dashboard.missing} เขต` : ""}
+                {dashboard.average !== null
+                  ? ` · คะแนนเฉลี่ย ${dashboard.average.toFixed(1)}/3`
+                  : ""}
+              </div>
+
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                {dashboard.zoneSummaries.map((zone) => {
+                  const meta = stateMeta[zone.state];
+                  return (
+                    <div
+                      key={`public-summary-${zone.id}`}
+                      className={`rounded-xl border bg-white px-3.5 py-3 ${
+                        zone.state === "approved"
+                          ? "border-emerald-100"
+                          : zone.state === "pending"
+                            ? "border-amber-100"
+                            : zone.state === "failed"
+                              ? "border-rose-100"
+                              : "border-slate-200"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-black text-slate-800">
+                          {zone.name}{zone.class ? ` · ${zone.class}` : ""}
+                        </p>
+                        <span className={`shrink-0 text-[11px] font-bold ${meta.textClass}`}>
+                          {meta.label}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                        {getZonePublicSummary(zone)}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-100 pt-4 text-xs text-slate-500">
