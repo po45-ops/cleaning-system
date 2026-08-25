@@ -175,27 +175,6 @@ const getZonePublicSummary = (zone: ZoneSummary): string => {
   return "ตรวจเรียบร้อยแล้ว และมีผลการตรวจบันทึกในระบบวันนี้";
 };
 
-const formatRecordTime = (record: PublicInspection): string => {
-  const raw = record.updatedAt || record.timestamp || record.createdAt;
-  if (!raw) return "";
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("th-TH", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-};
-
-const formatShortThaiDate = (dateValue: string): string => {
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return dateValue;
-  return new Intl.DateTimeFormat("th-TH", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(date);
-};
-
 export default function PublicDashboard({
   inspections,
   zones,
@@ -212,20 +191,12 @@ export default function PublicDashboard({
 
   const dashboard = useMemo(() => {
     const todayByZone = new Map<number, PublicInspection>();
-    const latestByDayAndZone = new Map<string, PublicInspection>();
 
     inspections.forEach((record) => {
       const zoneId = Number(record.zoneId);
       if (!zones.some((zone) => zone.id === zoneId)) return;
 
-      const dateKey = formatDateKey(record.date);
-      const uniqueKey = `${dateKey}|${zoneId}`;
-      latestByDayAndZone.set(
-        uniqueKey,
-        pickLatest(latestByDayAndZone.get(uniqueKey), record)
-      );
-
-      if (dateKey === todayKey) {
+      if (formatDateKey(record.date) === todayKey) {
         todayByZone.set(zoneId, pickLatest(todayByZone.get(zoneId), record));
       }
     });
@@ -259,10 +230,6 @@ export default function PublicDashboard({
         reviewedScores.length
       : null;
 
-    const recent = Array.from(latestByDayAndZone.values())
-      .sort((left, right) => getRecordRevision(right) - getRecordRevision(left))
-      .slice(0, 5);
-
     return {
       zoneSummaries,
       approved,
@@ -271,7 +238,6 @@ export default function PublicDashboard({
       missing,
       reviewed,
       average,
-      recent,
     };
   }, [inspections, todayKey, zones]);
 
@@ -449,21 +415,32 @@ export default function PublicDashboard({
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
           <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-            <div className="mb-5 flex items-center justify-between gap-3">
+            <div className="mb-4 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-600">
                   <MapIcon className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="font-black text-slate-800">สถานะพื้นที่ตรวจ</h3>
+                  <h3 className="font-black text-slate-800">สถานะพื้นที่ตรวจวันนี้</h3>
                   <p className="text-xs text-slate-500">
-                    หนึ่งสถานะล่าสุดต่อหนึ่งเขต ไม่มีรายการซ้ำ
+                    สถานะล่าสุดพร้อมสรุปสั้นของแต่ละเขตในจุดเดียว
                   </p>
                 </div>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
                 ส่งแล้ว {zones.length - dashboard.missing}/{zones.length}
               </span>
+            </div>
+
+            <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50/50 px-4 py-3 text-sm leading-relaxed text-slate-700">
+              <span className="font-black text-emerald-700">ภาพรวมวันนี้:</span>{" "}
+              ตรวจเสร็จแล้ว {dashboard.reviewed} จาก {zones.length} เขต
+              {dashboard.pending > 0 ? ` · รออนุมัติ ${dashboard.pending} เขต` : ""}
+              {dashboard.failed > 0 ? ` · ไม่ผ่าน ${dashboard.failed} เขต` : ""}
+              {dashboard.missing > 0 ? ` · ยังไม่บันทึก ${dashboard.missing} เขต` : ""}
+              {dashboard.average !== null
+                ? ` · คะแนนเฉลี่ย ${dashboard.average.toFixed(1)}/3`
+                : ""}
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -474,89 +451,41 @@ export default function PublicDashboard({
                     key={zone.id}
                     className={`rounded-2xl border p-4 transition-colors ${meta.cardClass}`}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-start gap-3">
                       <div
                         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${meta.iconClass}`}
                       >
                         <StateIcon state={zone.state} />
                       </div>
-                      <div className="min-w-0">
-                        <p className="truncate font-black text-slate-800">
-                          {zone.name}
-                          {zone.class ? (
-                            <span className="ml-1 text-xs font-medium text-slate-400">
-                              ({zone.class})
-                            </span>
-                          ) : null}
-                        </p>
-                        <p className={`text-xs font-bold ${meta.textClass}`}>
-                          {meta.label}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="truncate font-black text-slate-800">
+                            {zone.name}
+                            {zone.class ? (
+                              <span className="ml-1 text-xs font-medium text-slate-400">
+                                ({zone.class})
+                              </span>
+                            ) : null}
+                          </p>
+                          <span className={`shrink-0 text-[11px] font-bold ${meta.textClass}`}>
+                            {meta.label}
+                          </span>
+                        </div>
+                        <p className={`mt-0.5 text-xs font-bold ${meta.textClass}`}>
                           {zone.record && zone.state !== "pending"
-                            ? ` · ${Number(zone.record.score) || 0}/3`
-                            : ""}
+                            ? `คะแนน ${Number(zone.record.score) || 0}/3`
+                            : zone.state === "pending"
+                              ? "รอตรวจสอบผล"
+                              : "ยังไม่มีผลวันนี้"}
+                        </p>
+                        <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                          {getZonePublicSummary(zone)}
                         </p>
                       </div>
                     </div>
                   </div>
                 );
               })}
-            </div>
-
-            <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
-              <div className="mb-4 flex items-start gap-3">
-                <div className="rounded-xl bg-white p-2.5 text-emerald-600 shadow-sm ring-1 ring-slate-100">
-                  <FileText className="h-5 w-5" />
-                </div>
-                <div>
-                  <h4 className="font-black text-slate-800">สรุปสถานการณ์วันนี้ รายเขต</h4>
-                  <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
-                    สรุปเป็นข้อความให้เห็นภาพของแต่ละชั้นได้ทันที โดยไม่ต้องเปิดดูรายละเอียดภายในระบบ
-                  </p>
-                </div>
-              </div>
-
-              <div className="mb-4 rounded-xl border border-emerald-100 bg-white px-4 py-3 text-sm leading-relaxed text-slate-700 shadow-sm">
-                <span className="font-black text-emerald-700">ภาพรวมวันนี้:</span>{" "}
-                ตรวจเสร็จแล้ว {dashboard.reviewed} จาก {zones.length} เขต
-                {dashboard.pending > 0 ? ` · รออนุมัติ ${dashboard.pending} เขต` : ""}
-                {dashboard.failed > 0 ? ` · ไม่ผ่าน ${dashboard.failed} เขต` : ""}
-                {dashboard.missing > 0 ? ` · ยังไม่บันทึก ${dashboard.missing} เขต` : ""}
-                {dashboard.average !== null
-                  ? ` · คะแนนเฉลี่ย ${dashboard.average.toFixed(1)}/3`
-                  : ""}
-              </div>
-
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                {dashboard.zoneSummaries.map((zone) => {
-                  const meta = stateMeta[zone.state];
-                  return (
-                    <div
-                      key={`public-summary-${zone.id}`}
-                      className={`rounded-xl border bg-white px-3.5 py-3 ${
-                        zone.state === "approved"
-                          ? "border-emerald-100"
-                          : zone.state === "pending"
-                            ? "border-amber-100"
-                            : zone.state === "failed"
-                              ? "border-rose-100"
-                              : "border-slate-200"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-black text-slate-800">
-                          {zone.name}{zone.class ? ` · ${zone.class}` : ""}
-                        </p>
-                        <span className={`shrink-0 text-[11px] font-bold ${meta.textClass}`}>
-                          {meta.label}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                        {getZonePublicSummary(zone)}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
             </div>
 
             <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-100 pt-4 text-xs text-slate-500">
