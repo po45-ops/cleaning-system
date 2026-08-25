@@ -25,6 +25,35 @@ function DefaultLoginEntry() {
     loginButton.click();
   }, []);
 
+  useLayoutEffect(() => {
+    const currentLabel = "กลับไปดูภาพรวมสาธารณะ";
+    const newLabel = "ดูภาพรวมวันนี้";
+
+    const updatePublicOverviewButton = () => {
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).forEach(
+        (button) => {
+          if (!button.textContent?.includes(currentLabel)) return;
+
+          Array.from(button.childNodes).forEach((node) => {
+            if (
+              node.nodeType === Node.TEXT_NODE &&
+              node.textContent?.includes(currentLabel)
+            ) {
+              node.textContent = ` ${newLabel}`;
+            }
+          });
+        }
+      );
+    };
+
+    updatePublicOverviewButton();
+
+    const observer = new MutationObserver(updatePublicOverviewButton);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => observer.disconnect();
+  }, []);
+
   return <App />;
 }
 
