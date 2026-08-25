@@ -54,7 +54,12 @@ import {
   Save,
   TableProperties,
   Sparkles,
+  Home,
+  LogIn,
 } from "lucide-react";
+import PublicDashboard, {
+  type DashboardDestination,
+} from "./PublicDashboard";
 
 type InspectionStatus = "pending" | "approved" | "rejected";
 
@@ -88,12 +93,19 @@ type ApiResponse<T> = {
   data?: T;
 };
 
-type AppTab = "student" | "teacher" | "calendar" | "report" | "users";
+type AppTab =
+  | "overview"
+  | "student"
+  | "teacher"
+  | "calendar"
+  | "report"
+  | "users";
 
 type LoginMode = "student" | "admin";
 
 type LoginScreenProps = {
   onLogin: React.Dispatch<React.SetStateAction<AuthUser | null>>;
+  onBack: () => void;
   schoolLogo: string;
   studentCredentials: StudentCredential[];
   adminCredential: PasswordVerifier | null;
@@ -324,39 +336,30 @@ const formatDateKey = (dateStr: string | Date) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-const getInspectionStatusPriority = (status: string) => {
-  if (status === "approved") return 3;
-  if (status === "pending") return 2;
-  if (status === "rejected") return 1;
-  return 0;
-};
-
-const pickPreferredInspection = (
-  current: InspectionRecord | undefined,
-  candidate: InspectionRecord
-): InspectionRecord => {
-  if (!current) return candidate;
-
-  const currentPriority = getInspectionStatusPriority(current.status);
-  const candidatePriority = getInspectionStatusPriority(candidate.status);
-  if (candidatePriority !== currentPriority) {
-    return candidatePriority > currentPriority ? candidate : current;
+const getInspectionRevisionTimestamp = (item: InspectionRecord): number => {
+  for (const value of [item.updatedAt, item.timestamp, item.createdAt]) {
+    if (!value) continue;
+    const parsed = new Date(value).getTime();
+    if (Number.isFinite(parsed)) return parsed;
   }
 
-  const currentId = Number(current.id) || 0;
-  const candidateId = Number(candidate.id) || 0;
-  return candidateId >= currentId ? candidate : current;
+  const numericId = Number(item.id);
+  if (Number.isFinite(numericId)) return numericId;
+
+  const dateValue = new Date(item.date).getTime();
+  return Number.isFinite(dateValue) ? dateValue : 0;
 };
 
-// หากเขตเดิมส่งซ้ำในวันเดียวกัน ให้ข้อมูลที่มี ID ใหม่กว่าแทนข้อมูลเดิมเสมอ
+// หากเขตเดิมส่งซ้ำในวันเดียวกัน ใช้ revision ล่าสุดเป็นข้อมูลหลักเสมอ
 const pickLatestInspection = (
   current: InspectionRecord | undefined,
   candidate: InspectionRecord
 ): InspectionRecord => {
   if (!current) return candidate;
-  const currentId = Number(current.id) || 0;
-  const candidateId = Number(candidate.id) || 0;
-  return candidateId >= currentId ? candidate : current;
+  return getInspectionRevisionTimestamp(candidate) >=
+    getInspectionRevisionTimestamp(current)
+    ? candidate
+    : current;
 };
 
 // ป้องกันข้อมูลซ้ำทั้งกรณี ID ซ้ำ และกรณีเขตเดิมถูกส่งซ้ำในวันเดียวกัน
@@ -368,10 +371,7 @@ const deduplicateInspections = (
   items.forEach((item, index) => {
     const id = String(item.id || "").trim();
     const key = id ? `id:${id}` : `row:${index}`;
-    recordsById.set(
-      key,
-      pickPreferredInspection(recordsById.get(key), item)
-    );
+    recordsById.set(key, pickLatestInspection(recordsById.get(key), item));
   });
 
   const recordsByDateAndZone = new Map<string, InspectionRecord>();
@@ -562,16 +562,19 @@ const prepareSchoolLogo = (file: File): Promise<string> => {
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(readStoredAuthUser);
 
-  const [activeTab, setActiveTab] = useState<AppTab>("student");
+  const [activeTab, setActiveTab] = useState<AppTab>("overview");
+  const [showLogin, setShowLogin] = useState(false);
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const [dataError, setDataError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     if (user) {
       localStorage.setItem("cleaning_auth_user", JSON.stringify(user));
     } else {
       localStorage.removeItem("cleaning_auth_user");
-      setActiveTab("student");
+      setActiveTab("overview");
     }
   }, [user]);
 
@@ -699,28 +702,54 @@ export default function App() {
     };
   }, []);
 
-  const fetchFromSheets = async () => {
-    if (!user) return;
-    setIsLoadingData(true);
+  const fetchFromSheets = async (showLoadingIndicator = false) => {
+    if (showLoadingIndicator) setIsLoadingData(true);
+    setDataError("");
     try {
       const res = await fetch(`${SCRIPT_URL}?refresh=${Date.now()}`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       const json = (await res.json()) as ApiResponse<unknown[]>;
       if (json.status === "success") {
         const uniqueInspections = deduplicateInspections(
           Array.isArray(json.data) ? json.data.filter(isInspectionRecord) : []
         );
-        setInspections(uniqueInspections.reverse());
+        setInspections(
+          uniqueInspections.sort(
+            (left, right) =>
+              getInspectionRevisionTimestamp(right) -
+              getInspectionRevisionTimestamp(left)
+          )
+        );
+        setLastUpdated(new Date());
+      } else {
+        throw new Error(json.message || "ฐานข้อมูลไม่ตอบกลับตามรูปแบบที่กำหนด");
       }
     } catch (err) {
       console.error("โหลดข้อมูลล้มเหลว:", err);
+      setDataError("ไม่สามารถเชื่อมต่อฐานข้อมูลกลางได้ กรุณาลองใหม่อีกครั้ง");
     } finally {
-      setIsLoadingData(false);
+      if (showLoadingIndicator) setIsLoadingData(false);
     }
   };
 
   useEffect(() => {
-    fetchFromSheets();
-  }, [user]);
+    void fetchFromSheets(true);
+    const refreshInterval = window.setInterval(() => {
+      void fetchFromSheets(false);
+    }, 30_000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void fetchFromSheets(false);
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(refreshInterval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
 
   const deleteInspection = async (id: InspectionRecord["id"]) => {
     if (
@@ -831,13 +860,21 @@ export default function App() {
 
   const confirmLogout = () => {
     setUser(null);
+    setShowLogin(false);
     setShowLogoutConfirm(false);
   };
 
-  if (!user) {
+  const handleDashboardNavigate = (destination: DashboardDestination) => {
+    if (destination === "report" && user?.role !== "admin") return;
+    setActiveTab(destination);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  if (!user && showLogin) {
     return (
       <LoginScreen
         onLogin={setUser}
+        onBack={() => setShowLogin(false)}
         schoolLogo={schoolLogo}
         studentCredentials={studentCredentials}
         adminCredential={adminCredential}
@@ -846,10 +883,79 @@ export default function App() {
     );
   }
 
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
+        <header className="sticky top-0 z-40 bg-gradient-to-r from-emerald-700 via-emerald-600 to-teal-600 text-white shadow-lg print:hidden">
+          <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white p-1.5 shadow-sm sm:h-14 sm:w-14">
+                {schoolLogo ? (
+                  <img
+                    src={schoolLogo}
+                    alt="ตราโรงเรียนไตรธารวิทยา"
+                    className="h-full w-full object-contain"
+                  />
+                ) : (
+                  <Shield className="h-7 w-7 text-emerald-600" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <h1 className="truncate text-base font-black leading-tight sm:text-xl">
+                  ระบบตรวจเวรทำความสะอาด
+                </h1>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                  <p className="text-xs text-emerald-50 sm:text-sm">
+                    โรงเรียนไตรธารวิทยา
+                  </p>
+                  <span className="rounded-full border border-white/20 bg-emerald-900/25 px-2 py-0.5 text-[10px] font-bold text-emerald-50">
+                    หน้าสาธารณะ
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+              <div className="hidden rounded-xl border border-white/20 bg-emerald-800/25 p-1 md:flex">
+                <span className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-emerald-700 shadow-sm">
+                  <Home className="h-4 w-4" /> ภาพรวม
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLogin(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-emerald-800/40 px-3 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-white hover:text-emerald-700 sm:px-4"
+              >
+                <LogIn className="h-4 w-4" />
+                <span className="hidden sm:inline">เข้าสู่ระบบเจ้าหน้าที่</span>
+                <span className="sm:hidden">เข้าสู่ระบบ</span>
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <main className="mx-auto max-w-[1500px] px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
+          <PublicDashboard
+            inspections={inspections}
+            zones={ZONES}
+            isLoading={isLoadingData}
+            error={dataError}
+            lastUpdated={lastUpdated}
+            onRefresh={() => void fetchFromSheets(true)}
+          />
+        </main>
+
+        <footer className="px-4 pb-8 text-center text-xs text-slate-400">
+          ระบบตรวจเวรทำความสะอาด โรงเรียนไตรธารวิทยา
+        </footer>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-20 md:pb-0 print:bg-white print:pb-0">
       <header className="bg-emerald-600 text-white p-3 md:p-4 shadow-md print:hidden sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
+        <div className="max-w-[1500px] mx-auto flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <div className="group relative bg-white p-1 rounded-full w-11 h-11 md:w-12 md:h-12 flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
               {schoolLogo ? (
@@ -896,6 +1002,17 @@ export default function App() {
 
           <div className="flex items-center gap-3 shrink-0">
             <div className="hidden md:flex bg-emerald-700/40 p-1 rounded-xl items-center gap-1 border border-emerald-500/30">
+              <button
+                onClick={() => setActiveTab("overview")}
+                className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
+                  activeTab === "overview"
+                    ? "bg-white text-emerald-700 shadow-sm"
+                    : "text-emerald-50 hover:bg-emerald-600/60"
+                }`}
+              >
+                <Home className="w-4 h-4" /> ภาพรวม
+              </button>
+
               <button
                 onClick={() => setActiveTab("student")}
                 className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
@@ -967,8 +1084,20 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto p-4 mt-2">
-        {isLoadingData ? (
+      <main className="max-w-[1500px] mx-auto p-4 mt-2">
+        {activeTab === "overview" ? (
+          <PublicDashboard
+            inspections={inspections}
+            zones={ZONES}
+            isLoading={isLoadingData}
+            error={dataError}
+            lastUpdated={lastUpdated}
+            onRefresh={() => void fetchFromSheets(true)}
+            onNavigate={handleDashboardNavigate}
+            isAuthenticated
+            canViewReports={user.role === "admin"}
+          />
+        ) : isLoadingData ? (
           <div className="py-20 text-center text-slate-500 font-bold flex flex-col items-center">
             <div className="w-12 h-12 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin mb-4"></div>
             กำลังดึงข้อมูลล่าสุดจาก Google Sheets...
@@ -1027,10 +1156,22 @@ export default function App() {
         )}
       </main>
 
-      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white shadow-[0_-2px_10px_rgba(0,0,0,0.1)] flex justify-around p-2 z-50 print:hidden">
+      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white shadow-[0_-2px_10px_rgba(0,0,0,0.1)] flex justify-start overflow-x-auto p-2 z-50 print:hidden">
+        <button
+          onClick={() => setActiveTab("overview")}
+          className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
+            activeTab === "overview"
+              ? "text-emerald-600 font-bold"
+              : "text-slate-400"
+          }`}
+        >
+          <Home className="w-6 h-6 mb-1" />
+          <span className="text-[10px]">ภาพรวม</span>
+        </button>
+
         <button
           onClick={() => setActiveTab("student")}
-          className={`flex flex-col items-center p-2 ${
+          className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
             activeTab === "student"
               ? "text-emerald-600 font-bold"
               : "text-slate-400"
@@ -1042,7 +1183,7 @@ export default function App() {
 
         <button
           onClick={() => setActiveTab("teacher")}
-          className={`flex flex-col items-center p-2 relative ${
+          className={`relative flex min-w-[68px] flex-1 flex-col items-center p-2 ${
             activeTab === "teacher"
               ? "text-emerald-600 font-bold"
               : "text-slate-400"
@@ -1059,7 +1200,7 @@ export default function App() {
 
         <button
           onClick={() => setActiveTab("calendar")}
-          className={`flex flex-col items-center p-2 ${
+          className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
             activeTab === "calendar"
               ? "text-emerald-600 font-bold"
               : "text-slate-400"
@@ -1073,7 +1214,7 @@ export default function App() {
           <>
             <button
               onClick={() => setActiveTab("report")}
-              className={`flex flex-col items-center p-2 ${
+              className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
                 activeTab === "report"
                   ? "text-emerald-600 font-bold"
                   : "text-slate-400"
@@ -1084,7 +1225,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab("users")}
-              className={`flex flex-col items-center p-2 ${
+              className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
                 activeTab === "users"
                   ? "text-emerald-600 font-bold"
                   : "text-slate-400"
@@ -1132,6 +1273,7 @@ export default function App() {
 
 function LoginScreen({
   onLogin,
+  onBack,
   schoolLogo,
   studentCredentials,
   adminCredential,
@@ -1328,6 +1470,14 @@ function LoginScreen({
             การล็อกอินนี้เป็นเพียงการกั้นหน้าจอบนอุปกรณ์ จนกว่า API ฝั่งเซิร์ฟเวอร์จะเปิดใช้ระบบยืนยันตัวตน
           </p>
         </form>
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700"
+        >
+          <Home className="h-4 w-4" /> กลับไปดูภาพรวมสาธารณะ
+        </button>
       </div>
     </div>
   );
