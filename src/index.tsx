@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import CouncilCredentialNames from "./CouncilCredentialNames";
 import CouncilScheduleWidget from "./CouncilScheduleWidget";
+import SemesterLeaderboard from "./SemesterLeaderboard";
 import StudentScorePrivacy from "./StudentScorePrivacy";
 import { installDateInputGuard } from "./date-input-guard";
 import { installInspectionSyncGuard } from "./inspection-sync-guard";
@@ -70,6 +71,7 @@ root.render(
     <DefaultLoginEntry />
     <CouncilCredentialNames />
     <CouncilScheduleWidget />
+    <SemesterLeaderboard />
     <StudentScorePrivacy />
   </StrictMode>
 );
