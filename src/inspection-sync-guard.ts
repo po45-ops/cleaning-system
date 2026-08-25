@@ -61,7 +61,10 @@ const rewriteCleaningDataRequest = (
 
   if (typeof input === "string") return rewrittenUrl;
   if (input instanceof URL) return new URL(rewrittenUrl);
-  return new Request(rewrittenUrl, input);
+
+  // App.tsx currently sends the cleaning API URL as a string. Leave an
+  // existing Request object unchanged rather than rebuilding its body stream.
+  return input;
 };
 
 const mutationKey = (update: PendingStatusUpdate): string =>
@@ -197,7 +200,10 @@ export const installInspectionSyncGuard = () => {
     ).toUpperCase();
 
     const response = await originalFetch(requestInput, init);
-    if (!isCleaningDataRequest(originalUrl) && !isCleaningDataRequest(requestUrl)) {
+    if (
+      !isCleaningDataRequest(originalUrl) &&
+      !isCleaningDataRequest(requestUrl)
+    ) {
       return response;
     }
 
