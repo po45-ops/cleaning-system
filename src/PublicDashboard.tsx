@@ -582,67 +582,6 @@ export default function PublicDashboard({
           </article>
 
           <div className="space-y-6">
-            <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-emerald-600" />
-                  <h3 className="font-black text-slate-800">รายการล่าสุด</h3>
-                </div>
-                {isAuthenticated && onNavigate ? (
-                  <button
-                    type="button"
-                    onClick={() => onNavigate("teacher")}
-                    className="text-xs font-bold text-emerald-700 hover:text-emerald-800"
-                  >
-                    ดูทั้งหมด
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="divide-y divide-slate-100">
-                {dashboard.recent.length ? (
-                  dashboard.recent.map((record) => {
-                    const state = getRecordState(record);
-                    const meta = stateMeta[state];
-                    const zone = zones.find(
-                      (item) => item.id === Number(record.zoneId)
-                    );
-                    const time = formatRecordTime(record);
-                    return (
-                      <div
-                        key={`${formatDateKey(record.date)}-${record.zoneId}-${record.id}`}
-                        className="flex items-center gap-3 px-5 py-4"
-                      >
-                        <div
-                          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${meta.iconClass}`}
-                        >
-                          <StateIcon state={state} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-bold text-slate-800">
-                            {zone?.name || `เขต ${record.zoneId}`}
-                          </p>
-                          <p className="truncate text-xs text-slate-500">
-                            {formatShortThaiDate(record.date)}
-                            {time ? ` · ${time} น.` : ""}
-                          </p>
-                        </div>
-                        <span
-                          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${meta.cardClass} ${meta.textClass}`}
-                        >
-                          {meta.label}
-                        </span>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="px-5 py-10 text-center text-sm text-slate-400">
-                    ยังไม่มีรายการตรวจ
-                  </div>
-                )}
-              </div>
-            </article>
-
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center gap-2">
                 <BarChart3 className="h-5 w-5 text-emerald-600" />
