@@ -5,6 +5,7 @@ import {
   AlignmentType,
   BorderStyle,
   Document,
+  ImageRun,
   Packer,
   PageOrientation,
   Paragraph,
@@ -274,6 +275,39 @@ const compressImage = (file) => {
   });
 };
 
+const prepareSchoolLogo = (file: File): Promise<string> => {
+  return new Promise<string>((resolve, reject) => {
+    if (!file || !String(file.type || "").startsWith("image/")) {
+      reject(new Error("กรุณาเลือกไฟล์รูปภาพ"));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("อ่านไฟล์รูปภาพไม่สำเร็จ"));
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("เปิดไฟล์รูปภาพไม่สำเร็จ"));
+      img.onload = () => {
+        const maxSize = 512;
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const context = canvas.getContext("2d");
+        if (!context) {
+          reject(new Error("เตรียมรูปภาพไม่สำเร็จ"));
+          return;
+        }
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      img.src = String(event.target?.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
 export default function App() {
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem("cleaning_auth_user");
@@ -300,6 +334,21 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("cleaning_school_logo", schoolLogo);
   }, [schoolLogo]);
+
+  const handleSchoolLogoUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      setSchoolLogo(await prepareSchoolLogo(file));
+    } catch (error) {
+      alert(
+        error instanceof Error ? error.message : "เพิ่มรูปส่วนหัวไม่สำเร็จ"
+      );
+    }
+  };
 
   const [studentCredentials, setStudentCredentials] = useState(() => {
     const saved = localStorage.getItem("cleaning_student_creds");
@@ -457,7 +506,7 @@ export default function App() {
       <header className="bg-emerald-600 text-white p-3 md:p-4 shadow-md print:hidden sticky top-0 z-40">
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <div className="bg-white p-1 rounded-full w-11 h-11 md:w-12 md:h-12 flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
+            <div className="group relative bg-white p-1 rounded-full w-11 h-11 md:w-12 md:h-12 flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
               {schoolLogo ? (
                 <img
                   src={schoolLogo}
@@ -466,6 +515,21 @@ export default function App() {
                 />
               ) : (
                 <Camera className="w-5 h-5 md:w-6 md:h-6 text-emerald-600" />
+              )}
+              {user.role === "admin" && (
+                <label
+                  className="absolute inset-0 flex cursor-pointer items-center justify-center bg-emerald-900/75 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
+                  title="คลิกเพื่อใส่หรือเปลี่ยนตราโรงเรียน"
+                >
+                  <Upload className="h-4 w-4" />
+                  <span className="sr-only">ใส่หรือเปลี่ยนตราโรงเรียน</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="sr-only"
+                    onChange={handleSchoolLogoUpload}
+                  />
+                </label>
               )}
             </div>
             <div>
@@ -1946,6 +2010,21 @@ function ReportView({
   const [savedCell, setSavedCell] = useState("");
   const [reportMode, setReportMode] = useState("weekly");
 
+  const handleReportLogoUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      setSchoolLogo(await prepareSchoolLogo(file));
+    } catch (error) {
+      alert(
+        error instanceof Error ? error.message : "เพิ่มตราโรงเรียนไม่สำเร็จ"
+      );
+    }
+  };
+
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem("cleaning_report_settings");
     if (saved) {
@@ -2055,6 +2134,14 @@ function ReportView({
   const weeklyFilteredData = approvedData.filter(
     (item) => getWeekNumFromDate(item.date) === selectedReportWeek
   );
+  const weeklyReportData = weeklyFilteredData
+    .slice()
+    .sort((left: any, right: any) => {
+      const dateCompare = formatDateKey(left.date).localeCompare(
+        formatDateKey(right.date)
+      );
+      return dateCompare || Number(left.zoneId) - Number(right.zoneId);
+    });
 
   const reportFileName = (extension) =>
     `รายงานตรวจเวร_${
@@ -2336,6 +2423,70 @@ function ReportView({
       ],
     });
 
+  const createWordImageRun = async (
+    source: string,
+    { maxWidth = 155, maxHeight = 110 } = {}
+  ): Promise<ImageRun | null> => {
+    if (!source) return null;
+    try {
+      const [response, dimensions] = await Promise.all([
+        fetch(source),
+        new Promise<{ width: number; height: number }>((resolve) => {
+          const image = new Image();
+          image.onload = () =>
+            resolve({ width: image.naturalWidth, height: image.naturalHeight });
+          image.onerror = () => resolve({ width: maxWidth, height: maxHeight });
+          image.src = source;
+        }),
+      ]);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = new Uint8Array(await response.arrayBuffer());
+      const naturalWidth = Math.max(1, Number(dimensions.width) || maxWidth);
+      const naturalHeight = Math.max(1, Number(dimensions.height) || maxHeight);
+      const scale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight);
+      return new ImageRun({
+        data,
+        transformation: {
+          width: Math.max(1, Math.round(naturalWidth * scale)),
+          height: Math.max(1, Math.round(naturalHeight * scale)),
+        },
+      });
+    } catch (error) {
+      console.warn("Unable to embed report image in Word", error);
+      return null;
+    }
+  };
+
+  const createWordPhotoCell = (imageRun: ImageRun | null) =>
+    new TableCell({
+      width: { size: 33.33, type: WidthType.PERCENTAGE },
+      verticalAlign: VerticalAlign.CENTER,
+      margins: { top: 80, bottom: 80, left: 60, right: 60 },
+      borders: {
+        top: { style: BorderStyle.SINGLE, size: 3, color: "CBD5E1" },
+        bottom: { style: BorderStyle.SINGLE, size: 3, color: "CBD5E1" },
+        left: { style: BorderStyle.SINGLE, size: 3, color: "CBD5E1" },
+        right: { style: BorderStyle.SINGLE, size: 3, color: "CBD5E1" },
+      },
+      children: [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 0, after: 0 },
+          children: imageRun
+            ? [imageRun]
+            : [
+                new TextRun({
+                  text: "ไม่มีรูปภาพ",
+                  italics: true,
+                  color: "64748B",
+                  font: "TH Sarabun PSK",
+                  size: 24,
+                }),
+              ],
+        }),
+      ],
+    });
+
   const exportToWord = async () => {
     setExporting("word");
     try {
@@ -2416,7 +2567,20 @@ function ReportView({
         ],
       });
 
-      const children = [
+      const children: Array<Paragraph | Table> = [];
+      const logoRun = schoolLogo
+        ? await createWordImageRun(schoolLogo, { maxWidth: 85, maxHeight: 85 })
+        : null;
+      if (logoRun) {
+        children.push(
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 70 },
+            children: [logoRun],
+          })
+        );
+      }
+      children.push(
         new Paragraph({
           alignment: AlignmentType.CENTER,
           spacing: { after: 80 },
@@ -2455,8 +2619,8 @@ function ReportView({
               size: 30,
             }),
           ],
-        }),
-      ];
+        })
+      );
 
       if (reportMode === "weekly") {
         children.push(
@@ -2471,36 +2635,67 @@ function ReportView({
                 size: 34,
               }),
             ],
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              new TableRow({
-                tableHeader: true,
-                cantSplit: true,
-                children: ["วันที่", "เขต", "คะแนน", "หมายเหตุ", "ลิงก์รูปภาพ"].map(
-                  (value) =>
-                    createWordCell(value, { bold: true, fill: "DBEAFE" })
-                ),
-              }),
-              ...weeklyFilteredData.map((item) => {
-                const zone = ZONES.find(
-                  (zoneItem) => zoneItem.id === Number(item.zoneId)
-                );
-                return new TableRow({
-                  cantSplit: true,
-                  children: [
-                    formatThaiDateShort(item.date),
-                    zone?.name || "",
-                    `${item.score}/3`,
-                    item.notes || "-",
-                    (item.images || []).join("\n"),
-                  ].map((value) => createWordCell(value)),
-                });
-              }),
-            ],
           })
         );
+
+        if (!weeklyReportData.length) {
+          children.push(
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({
+                  text: "ไม่มีข้อมูลรูปภาพในสัปดาห์นี้",
+                  font: "TH Sarabun PSK",
+                  size: 30,
+                }),
+              ],
+            })
+          );
+        }
+
+        for (const item of weeklyReportData) {
+          const zone = ZONES.find(
+            (zoneItem) => zoneItem.id === Number(item.zoneId)
+          );
+          children.push(
+            new Paragraph({
+              keepNext: true,
+              spacing: { before: 160, after: 70 },
+              children: [
+                new TextRun({
+                  text:
+                    `${zone ? `${zone.name} - ${zone.class}` : "ไม่ทราบเขต"} ` +
+                    `(วันที่: ${formatThaiDateShort(item.date)})` +
+                    `    คะแนน: ${item.score}/3` +
+                    `    หมายเหตุ: ${item.notes || "-"}`,
+                  bold: true,
+                  font: "TH Sarabun PSK",
+                  size: 28,
+                }),
+              ],
+            })
+          );
+          const sourceImages: string[] = Array.isArray(item.images)
+            ? item.images.slice(0, 3).map((source: any) => String(source))
+            : [];
+          const imageRuns: Array<ImageRun | null> = await Promise.all(
+            sourceImages.map((source: string) => createWordImageRun(source))
+          );
+          while (imageRuns.length < 3) imageRuns.push(null);
+          children.push(
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                new TableRow({
+                  cantSplit: true,
+                  children: imageRuns.map((imageRun) =>
+                    createWordPhotoCell(imageRun)
+                  ),
+                }),
+              ],
+            })
+          );
+        }
       }
 
       const documentFile = new Document({
@@ -2664,9 +2859,33 @@ function ReportView({
         }
         .formal-report-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
         .formal-report-table th, .formal-report-table td {
+          height: 44px;
+          padding: 0 !important;
+          text-align: center !important;
+          vertical-align: middle !important;
+          line-height: 1 !important;
+        }
+        .formal-cell-content {
+          box-sizing: border-box;
+          display: flex;
+          width: 100%;
+          min-height: 44px;
+          align-items: center;
+          justify-content: center;
+          padding: 4px 6px;
           text-align: center;
-          vertical-align: middle;
-          line-height: 1.15;
+          line-height: 1.05;
+        }
+        .formal-report-table thead .formal-cell-content {
+          min-height: 48px;
+        }
+        .formal-report-table.compact-report-table th,
+        .formal-report-table.compact-report-table td {
+          height: 28px;
+        }
+        .formal-report-table.compact-report-table .formal-cell-content {
+          min-height: 28px;
+          padding: 2px 4px;
         }
         .pdf-export-node { box-sizing: border-box; width: 100%; padding: 24px; background: white; }
         .avoid-break, .photo-record { break-inside: avoid; page-break-inside: avoid; }
@@ -2796,6 +3015,48 @@ function ReportView({
           </div>
 
           <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-4">
+            <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center md:col-span-4">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-100 bg-emerald-50">
+                {schoolLogo ? (
+                  <img
+                    src={schoolLogo}
+                    alt="ตัวอย่างตราโรงเรียน"
+                    className="h-full w-full object-contain p-1"
+                  />
+                ) : (
+                  <Camera className="h-7 w-7 text-emerald-600" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">
+                  ตราโรงเรียน / รูปส่วนหัวรายงาน
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  รูปนี้จะแสดงที่ส่วนหัวระบบ หน้าเข้าสู่ระบบ และไฟล์รายงาน PDF/Word
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700">
+                  <Upload className="h-4 w-4" />
+                  {schoolLogo ? "เปลี่ยนรูป" : "ใส่รูป"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="sr-only"
+                    onChange={handleReportLogoUpload}
+                  />
+                </label>
+                {schoolLogo && (
+                  <button
+                    type="button"
+                    onClick={() => setSchoolLogo("")}
+                    className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100"
+                  >
+                    <Trash2 className="h-4 w-4" /> ลบรูป
+                  </button>
+                )}
+              </div>
+            </div>
             <label className="md:col-span-2">
               <span className="mb-1 block text-xs font-bold text-slate-600">
                 วันจันทร์ของสัปดาห์ที่ 1 (วันเปิดภาคเรียน)
@@ -2967,25 +3228,27 @@ function ReportView({
                     <thead>
                       <tr className="bg-slate-100">
                         <th className="border border-black py-1 px-2 text-center font-bold w-[40%]">
-                          รายการ / เขตพื้นที่
+                          <div className="formal-cell-content">
+                            รายการ / เขตพื้นที่
+                          </div>
                         </th>
                         <th className="border border-black py-1 px-2 text-center font-bold w-[8%]">
-                          จ.
+                          <div className="formal-cell-content">จ.</div>
                         </th>
                         <th className="border border-black py-1 px-2 text-center font-bold w-[8%]">
-                          อ.
+                          <div className="formal-cell-content">อ.</div>
                         </th>
                         <th className="border border-black py-1 px-2 text-center font-bold w-[8%]">
-                          พ.
+                          <div className="formal-cell-content">พ.</div>
                         </th>
                         <th className="border border-black py-1 px-2 text-center font-bold w-[8%]">
-                          พฤ.
+                          <div className="formal-cell-content">พฤ.</div>
                         </th>
                         <th className="border border-black py-1 px-2 text-center font-bold w-[8%]">
-                          ศ.
+                          <div className="formal-cell-content">ศ.</div>
                         </th>
                         <th className="border border-black py-1 px-2 text-center font-bold bg-slate-200 w-[12%]">
-                          รวม
+                          <div className="formal-cell-content">รวม</div>
                         </th>
                       </tr>
                     </thead>
@@ -2996,7 +3259,9 @@ function ReportView({
                         return (
                           <tr key={zone.id} className="h-[44px]">
                             <td className="border border-black px-2 py-1.5 text-center align-middle font-bold">
-                              {zone.name} {zone.fullClass}
+                              <div className="formal-cell-content">
+                                {zone.name} {zone.fullClass}
+                              </div>
                             </td>
                             {currentWeekDates.map((date) => {
                               const record = inspections.find(
@@ -3029,48 +3294,52 @@ function ReportView({
                                       : "bg-emerald-50"
                                   }`}
                                 >
-                                  <span className="print-only hidden">
-                                    {score}
-                                  </span>
-                                  <div className="screen-only relative flex items-center justify-center gap-1">
-                                    <select
-                                      aria-label={`แก้คะแนน ${zone.name} วันที่ ${date}`}
-                                      title={
-                                        record
-                                          ? "แก้คะแนนและอนุมัติข้อมูล พร้อมอัปเดตปฏิทิน"
-                                          : "เพิ่มคะแนนช่องว่าง พร้อมอัปเดตปฏิทิน"
-                                      }
-                                      value={record ? Number(record.score) : ""}
-                                      disabled={savingCell === cellKey}
-                                      onChange={(event) =>
-                                        handleInlineScoreChange(
-                                          record,
-                                          zone.id,
-                                          date,
-                                          event.target.value
-                                        )
-                                      }
-                                      className="w-14 cursor-pointer rounded-lg border border-slate-300 bg-white px-1 py-1 text-center font-sans text-sm font-bold text-slate-800 outline-none hover:border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:cursor-wait disabled:opacity-50"
-                                    >
-                                      {!record && <option value="">–</option>}
-                                      {[0, 1, 2, 3].map((value) => (
-                                        <option key={value} value={value}>
-                                          {value}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    {savingCell === cellKey && (
-                                      <Save className="h-3.5 w-3.5 animate-pulse text-amber-600" />
-                                    )}
-                                    {savedCell === cellKey && (
-                                      <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
-                                    )}
+                                  <div className="formal-cell-content">
+                                    <span className="print-only hidden">
+                                      {score}
+                                    </span>
+                                    <div className="screen-only relative flex items-center justify-center gap-1">
+                                      <select
+                                        aria-label={`แก้คะแนน ${zone.name} วันที่ ${date}`}
+                                        title={
+                                          record
+                                            ? "แก้คะแนนและอนุมัติข้อมูล พร้อมอัปเดตปฏิทิน"
+                                            : "เพิ่มคะแนนช่องว่าง พร้อมอัปเดตปฏิทิน"
+                                        }
+                                        value={record ? Number(record.score) : ""}
+                                        disabled={savingCell === cellKey}
+                                        onChange={(event) =>
+                                          handleInlineScoreChange(
+                                            record,
+                                            zone.id,
+                                            date,
+                                            event.target.value
+                                          )
+                                        }
+                                        className="w-14 cursor-pointer rounded-lg border border-slate-300 bg-white px-1 py-1 text-center font-sans text-sm font-bold text-slate-800 outline-none hover:border-emerald-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:cursor-wait disabled:opacity-50"
+                                      >
+                                        {!record && <option value="">–</option>}
+                                        {[0, 1, 2, 3].map((value) => (
+                                          <option key={value} value={value}>
+                                            {value}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {savingCell === cellKey && (
+                                        <Save className="h-3.5 w-3.5 animate-pulse text-amber-600" />
+                                      )}
+                                      {savedCell === cellKey && (
+                                        <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                               );
                             })}
                             <td className="border border-black py-1.5 px-2 text-center font-bold">
-                              {hasData ? total : "-"}
+                              <div className="formal-cell-content">
+                                {hasData ? total : "-"}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -3139,12 +3408,12 @@ function ReportView({
                     {selectedReportWeek})
                   </h2>
                   <div className="space-y-4">
-                    {weeklyFilteredData.length === 0 ? (
+                    {weeklyReportData.length === 0 ? (
                       <p className="text-center py-6">
                         ไม่มีข้อมูลรูปภาพในสัปดาห์นี้
                       </p>
                     ) : null}
-                    {weeklyFilteredData.map((item) => {
+                    {weeklyReportData.map((item: any) => {
                       const zone = ZONES.find(
                         (z) => z.id === Number(item.zoneId)
                       );
@@ -3195,18 +3464,18 @@ function ReportView({
             {reportMode === "semester" && (
               <div className="mb-4">
                 <div>
-                  <table className="formal-report-table w-full border-collapse border border-black text-[13pt] print:text-[12pt] leading-tight">
+                  <table className="formal-report-table compact-report-table w-full border-collapse border border-black text-[13pt] print:text-[12pt] leading-tight">
                     <thead>
                       <tr className="bg-slate-100">
                         <th className="border border-black py-0.5 px-1 text-center font-bold w-[10%]">
-                          สัปดาห์ที่
+                          <div className="formal-cell-content">สัปดาห์ที่</div>
                         </th>
                         {ZONES.map((z) => (
                           <th
                             key={z.id}
                             className="border border-black py-0.5 px-1 text-center font-bold w-[10%]"
                           >
-                            {z.name}
+                            <div className="formal-cell-content">{z.name}</div>
                           </th>
                         ))}
                       </tr>
@@ -3215,7 +3484,7 @@ function ReportView({
                       {WEEKS.map((week) => (
                         <tr key={week}>
                           <td className="border border-black py-0.5 px-1 text-center font-bold">
-                            {week}
+                            <div className="formal-cell-content">{week}</div>
                           </td>
                           {ZONES.map((zone) => {
                             const score = getSemesterScore(week, zone.id);
@@ -3224,7 +3493,9 @@ function ReportView({
                                 key={`${week}-${zone.id}`}
                                 className="border border-black py-0.5 px-1 text-center"
                               >
-                                {score > 0 ? score : "-"}
+                                <div className="formal-cell-content">
+                                  {score > 0 ? score : "-"}
+                                </div>
                               </td>
                             );
                           })}
@@ -3232,21 +3503,23 @@ function ReportView({
                       ))}
                       <tr className="font-bold bg-slate-50">
                         <td className="border border-black py-1 px-1 text-center whitespace-nowrap align-middle">
-                          รวมคะแนน
+                          <div className="formal-cell-content">รวมคะแนน</div>
                         </td>
                         {ZONES.map((zone) => (
                           <td
                             key={`t-${zone.id}`}
                             className="border border-black py-1 px-1 text-center"
                           >
-                            {getZoneTotalSemester(zone.id)}
+                            <div className="formal-cell-content">
+                              {getZoneTotalSemester(zone.id)}
+                            </div>
                           </td>
                         ))}
                       </tr>
                       {/* 🚀 แถวคิดเป็น % */}
                       <tr className="font-bold bg-slate-50">
                         <td className="border border-black py-1 px-1 text-center whitespace-nowrap align-middle">
-                          คิดเป็น %
+                          <div className="formal-cell-content">คิดเป็น %</div>
                         </td>
                         {ZONES.map((zone) => {
                           const total = getZoneTotalSemester(zone.id);
@@ -3257,7 +3530,9 @@ function ReportView({
                               key={`p-${zone.id}`}
                               className="border border-black py-1 px-1 text-center"
                             >
-                              {percent !== "-" ? `${percent}` : "-"}
+                              <div className="formal-cell-content">
+                                {percent !== "-" ? `${percent}` : "-"}
+                              </div>
                             </td>
                           );
                         })}

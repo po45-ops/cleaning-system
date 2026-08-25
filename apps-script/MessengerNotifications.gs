@@ -62,6 +62,8 @@ function initializeCleaningMessengerConfig() {
     SEND_DAILY_PDF_REPORT: "true",
     SEND_MONTHLY_PDF_REPORT: "true",
     CLEANING_REPORT_MAX_IMAGES: "6",
+    CLEANING_DAILY_REPORT_MAX_IMAGES: "27",
+    CLEANING_WEEKLY_REPORT_MAX_IMAGES: "135",
     SCHOOL_NAME: "โรงเรียนไตรธารวิทยา",
   };
 
@@ -291,6 +293,24 @@ function getCleaningMessengerConfig_() {
       Math.min(
         10,
         Number(properties.getProperty("CLEANING_REPORT_MAX_IMAGES") || "6") || 6
+      )
+    ),
+    dailyReportMaxImages: Math.max(
+      3,
+      Math.min(
+        27,
+        Number(
+          properties.getProperty("CLEANING_DAILY_REPORT_MAX_IMAGES") || "27"
+        ) || 27
+      )
+    ),
+    weeklyReportMaxImages: Math.max(
+      3,
+      Math.min(
+        135,
+        Number(
+          properties.getProperty("CLEANING_WEEKLY_REPORT_MAX_IMAGES") || "135"
+        ) || 135
       )
     ),
     dataUrl:
@@ -993,12 +1013,15 @@ function enqueueCleaningReportJob_(type, senderId, config, options) {
     (options && options.dateKey) || dateKeyInTimeZone_(now, config.timeZone);
   const monthKey =
     (options && options.monthKey) || String(dateKey).slice(0, 7);
+  const weekStartKey =
+    (options && options.weekStartKey) || getSchoolWeekRange_(dateKey).startKey;
   queue.push({
     id: Utilities.getUuid(),
     type,
     senderId: String(senderId),
     dateKey,
     monthKey,
+    weekStartKey,
     messageId,
     messagingType: String(
       (options && options.messagingType) || "RESPONSE"
@@ -1087,10 +1110,17 @@ function processCleaningReportJobs() {
 }
 
 function processCleaningReportJob_(job, config) {
-  const report =
-    job.type === "monthly_pdf"
-      ? createMonthlyCleaningReportPdf_(config, job.monthKey)
-      : createDailyCleaningReportPdf_(config, job.dateKey);
+  let report;
+  if (job.type === "monthly_pdf") {
+    report = createMonthlyCleaningReportPdf_(config, job.monthKey);
+  } else if (job.type === "weekly_pdf") {
+    report = createWeeklyCleaningReportPdf_(
+      config,
+      job.weekStartKey || job.dateKey
+    );
+  } else {
+    report = createDailyCleaningReportPdf_(config, job.dateKey);
+  }
   const reportConfig = Object.assign({}, config, {
     messagingType:
       job.messagingType === "UPDATE" ? "UPDATE" : "RESPONSE",
@@ -1166,9 +1196,13 @@ function createDailyCleaningReportPdf_(config, dateKey) {
       ]);
     });
     const table = body.appendTable(rows);
-    styleReportTableHeader_(table);
+    styleReportTable_(table, {
+      columnWidths: [62, 165, 54, 68, 105],
+    });
 
-    body.appendParagraph("ภาพประกอบการตรวจ").setHeading(
+    appendReportSignatureBlock_(body);
+    body.appendPageBreak();
+    body.appendParagraph("ภาคผนวก: ภาพประกอบการตรวจประจำวัน").setHeading(
       DocumentApp.ParagraphHeading.HEADING1
     );
     const imageRecords = CLEANING_MESSENGER.ZONES.map(
@@ -1177,7 +1211,7 @@ function createDailyCleaningReportPdf_(config, dateKey) {
     appendReportImages_(
       body,
       imageRecords,
-      config.reportMaxImages,
+      config.dailyReportMaxImages,
       config
     );
     appendReportFooter_(body, config);
@@ -1188,6 +1222,126 @@ function createDailyCleaningReportPdf_(config, dateKey) {
     return {
       title: `รายงานประจำวัน ${thaiDateLabel_(dateKey)}`,
       summary: `ตรวจแล้ว ${snapshot.checkedCount}/9 เขต — ${percent}%`,
+      url: pdfFile.getUrl(),
+      blob: pdfFile.getBlob().setName(fileName),
+      fileId: pdfFile.getId(),
+    };
+  } finally {
+    try {
+      sourceFile.setTrashed(true);
+    } catch (error) {
+      console.error(`ลบเอกสารชั่วคราวไม่สำเร็จ: ${error}`);
+    }
+  }
+}
+
+function createWeeklyCleaningReportPdf_(config, dateKey) {
+  const records = fetchCleaningRecords_(config);
+  const summary = buildWeeklyCleaningSummary_(records, dateKey, config);
+  const reportFolder = getCleaningReportFolder_();
+  const timestamp = Utilities.formatDate(
+    new Date(),
+    config.timeZone,
+    "HHmmss"
+  );
+  const fileName =
+    `cleaning-weekly-${summary.startKey}-${summary.endKey}-${timestamp}.pdf`;
+  const doc = DocumentApp.create(`temp-${fileName}`);
+  const sourceFile = DriveApp.getFileById(doc.getId());
+
+  try {
+    const body = doc.getBody();
+    appendReportTitle_(
+      body,
+      "ตารางบันทึกการปฏิบัติงาน\nทำความสะอาดเขตพื้นที่รับผิดชอบ",
+      `${config.schoolName}\nประจำสัปดาห์ (${formatThaiDateRange_(
+        summary.startKey,
+        summary.endKey
+      )})`
+    );
+    body
+      .appendParagraph(
+        `สรุปผล: บันทึกแล้ว ${summary.checkedSlots}/${summary.totalSlots} รายการ | ` +
+          `คะแนนรวม ${summary.totalScore} คะแนน | ` +
+          `ไม่ผ่าน ${summary.failedRecords.length} รายการ`
+      )
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+
+    const scoreRows = [
+      ["รายการ / เขตพื้นที่", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "รวม"],
+    ];
+    CLEANING_MESSENGER.ZONES.forEach((zone) => {
+      let hasScore = false;
+      let total = 0;
+      const dayScores = summary.dateKeys.map((currentDateKey) => {
+        const record =
+          summary.recordsByDateZone[`${currentDateKey}|${zone.id}`];
+        const numericScore = record ? Number(record.score) : NaN;
+        if (!Number.isFinite(numericScore)) return "-";
+        hasScore = true;
+        total += numericScore;
+        return String(numericScore);
+      });
+      scoreRows.push([
+        `${zone.name} ${zone.className}`,
+        ...dayScores,
+        hasScore ? String(total) : "-",
+      ]);
+    });
+    styleReportTable_(body.appendTable(scoreRows), {
+      columnWidths: [190, 42, 42, 42, 42, 42, 54],
+    });
+
+    appendReportSignatureBlock_(body);
+    body.appendPageBreak();
+    body
+      .appendParagraph("สรุปเวรผู้รับผิดชอบประจำสัปดาห์")
+      .setHeading(DocumentApp.ParagraphHeading.HEADING1)
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    body
+      .appendParagraph(formatThaiDateRange_(summary.startKey, summary.endKey))
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    const dutyRows = [["เขต", "ชั้น", "ผู้รับผิดชอบ"]];
+    CLEANING_MESSENGER.ZONES.forEach((zone) => {
+      dutyRows.push([
+        zone.name,
+        zone.className,
+        formatCouncilDutyLine_(summary.dutyByZone[zone.id]).replace(
+          "ผู้รับผิดชอบ: ",
+          ""
+        ),
+      ]);
+    });
+    styleReportTable_(body.appendTable(dutyRows), {
+      columnWidths: [70, 70, 310],
+    });
+
+    body.appendPageBreak();
+    body
+      .appendParagraph("ภาคผนวก: ภาพถ่ายหลักฐานประกอบการตรวจประจำสัปดาห์")
+      .setHeading(DocumentApp.ParagraphHeading.HEADING1);
+    body
+      .appendParagraph(formatThaiDateRange_(summary.startKey, summary.endKey))
+      .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    appendReportImages_(
+      body,
+      summary.records,
+      config.weeklyReportMaxImages,
+      config
+    );
+    appendReportFooter_(body, config);
+    doc.saveAndClose();
+
+    const blob = sourceFile.getAs(MimeType.PDF).setName(fileName);
+    const pdfFile = reportFolder.createFile(blob);
+    return {
+      title: `รายงานประจำสัปดาห์ ${formatThaiDateRange_(
+        summary.startKey,
+        summary.endKey
+      )}`,
+      summary:
+        `บันทึกแล้ว ${summary.checkedSlots}/${summary.totalSlots} รายการ — ` +
+        `มีภาพหลักฐาน ${summary.recordsWithImages.length} รายการ`,
       url: pdfFile.getUrl(),
       blob: pdfFile.getBlob().setName(fileName),
       fileId: pdfFile.getId(),
@@ -1336,6 +1490,68 @@ function buildCleaningSnapshotForDate_(records, dateKey, config) {
     failedRecords: checkedZoneIds
       .map((zoneId) => latestByZone[zoneId])
       .filter(isFailedRecord_),
+  };
+}
+
+function buildWeeklyCleaningSummary_(records, dateKey, config) {
+  const range = getSchoolWeekRange_(dateKey);
+  const dateLookup = {};
+  range.dateKeys.forEach((item) => {
+    dateLookup[item] = true;
+  });
+  const latestByDateZone = {};
+
+  records.forEach((record, index) => {
+    const normalizedDate = normalizeRecordDate_(record.date, config.timeZone);
+    const zoneId = Number(record.zoneId);
+    if (
+      !dateLookup[normalizedDate] ||
+      !Number.isInteger(zoneId) ||
+      zoneId < 1 ||
+      zoneId > CLEANING_MESSENGER.TOTAL_ZONES
+    ) {
+      return;
+    }
+    const key = `${normalizedDate}|${zoneId}`;
+    const candidate = Object.assign({}, record, {
+      _sourceIndex: index,
+      _dateKey: normalizedDate,
+    });
+    if (
+      !latestByDateZone[key] ||
+      compareRecordOrder_(candidate, latestByDateZone[key]) >= 0
+    ) {
+      latestByDateZone[key] = candidate;
+    }
+  });
+
+  const values = Object.keys(latestByDateZone)
+    .map((key) => latestByDateZone[key])
+    .sort((left, right) => {
+      const dateCompare = String(left._dateKey).localeCompare(
+        String(right._dateKey)
+      );
+      return dateCompare || Number(left.zoneId) - Number(right.zoneId);
+    });
+  const numericScores = values
+    .map((record) => Number(record.score))
+    .filter(Number.isFinite);
+  const recordsWithImages = values.filter(
+    (record) => Array.isArray(record.images) && record.images.length
+  );
+
+  return {
+    startKey: range.startKey,
+    endKey: range.endKey,
+    dateKeys: range.dateKeys,
+    recordsByDateZone: latestByDateZone,
+    records: values,
+    recordsWithImages,
+    checkedSlots: values.length,
+    totalSlots: range.dateKeys.length * CLEANING_MESSENGER.TOTAL_ZONES,
+    totalScore: numericScores.reduce((sum, score) => sum + score, 0),
+    failedRecords: values.filter(isFailedRecord_),
+    dutyByZone: getCouncilDutyByZone_(range.startKey),
   };
 }
 
@@ -1537,16 +1753,82 @@ function appendReportTitle_(body, title, subtitle) {
   body.appendHorizontalRule();
 }
 
-function styleReportTableHeader_(table) {
+function styleReportTable_(table, options) {
   if (!table || table.getNumRows() < 1) return;
-  const row = table.getRow(0);
-  for (let index = 0; index < row.getNumCells(); index += 1) {
-    const cell = row.getCell(index);
-    cell.setBackgroundColor("#D1FAE5");
-    try {
-      cell.getChild(0).asParagraph().editAsText().setBold(true);
-    } catch (error) {
-      console.error(`จัดรูปแบบหัวตารางไม่สำเร็จ: ${error}`);
+  const settings = options || {};
+  const columnWidths = Array.isArray(settings.columnWidths)
+    ? settings.columnWidths
+    : [];
+
+  for (let rowIndex = 0; rowIndex < table.getNumRows(); rowIndex += 1) {
+    const row = table.getRow(rowIndex);
+    for (let cellIndex = 0; cellIndex < row.getNumCells(); cellIndex += 1) {
+      const cell = row.getCell(cellIndex);
+      if (rowIndex === 0) cell.setBackgroundColor("#D1FAE5");
+      if (columnWidths[cellIndex]) cell.setWidth(columnWidths[cellIndex]);
+      try {
+        cell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+      } catch (error) {
+        console.error(`จัดกึ่งกลางแนวตั้งไม่สำเร็จ: ${error}`);
+      }
+
+      for (let childIndex = 0; childIndex < cell.getNumChildren(); childIndex += 1) {
+        try {
+          const paragraph = cell.getChild(childIndex).asParagraph();
+          paragraph
+            .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+            .setSpacingBefore(0)
+            .setSpacingAfter(0)
+            .setLineSpacing(1);
+          paragraph
+            .editAsText()
+            .setBold(rowIndex === 0)
+            .setFontFamily("TH Sarabun New")
+            .setFontSize(13);
+        } catch (error) {
+          console.error(`จัดกึ่งกลางข้อความในตารางไม่สำเร็จ: ${error}`);
+        }
+      }
+    }
+  }
+}
+
+function styleReportTableHeader_(table) {
+  styleReportTable_(table);
+}
+
+function appendReportSignatureBlock_(body) {
+  body.appendParagraph("");
+  const signatureTable = body.appendTable([
+    [
+      "ลงชื่อ ..........................................",
+      "ลงชื่อ ..........................................",
+      "ลงชื่อ ..........................................",
+    ],
+    ["(........................................)", "(........................................)", "(........................................)"],
+    [
+      "ประธานนักเรียน",
+      "ครูกิจการและพัฒนานักเรียน",
+      "ผู้อำนวยการโรงเรียน",
+    ],
+  ]);
+  signatureTable.setBorderWidth(0);
+  for (let rowIndex = 0; rowIndex < signatureTable.getNumRows(); rowIndex += 1) {
+    const row = signatureTable.getRow(rowIndex);
+    for (let cellIndex = 0; cellIndex < row.getNumCells(); cellIndex += 1) {
+      const cell = row.getCell(cellIndex);
+      cell.setWidth(150);
+      cell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+      const paragraph = cell.getChild(0).asParagraph();
+      paragraph
+        .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+        .setSpacingBefore(rowIndex === 0 ? 12 : 0)
+        .setSpacingAfter(0);
+      paragraph
+        .editAsText()
+        .setBold(rowIndex === 2)
+        .setFontFamily("TH Sarabun New")
+        .setFontSize(13);
     }
   }
 }
@@ -1555,47 +1837,101 @@ function appendReportImages_(body, records, maxImages, config) {
   let appended = 0;
   records.forEach((record) => {
     if (appended >= maxImages) return;
-    const images = Array.isArray(record.images) ? record.images : [];
-    images.forEach((url) => {
-      if (appended >= maxImages) return;
+    const sourceImages = Array.isArray(record.images)
+      ? record.images.slice(0, 3)
+      : [];
+    const blobs = [];
+    sourceImages.forEach((url) => {
+      if (appended + blobs.length >= maxImages) return;
       const blob = fetchReportImageBlob_(url);
-      if (!blob) return;
-      const zone = CLEANING_MESSENGER.ZONES.find(
-        (item) => item.id === Number(record.zoneId)
-      );
-      body.appendParagraph(
-        `${normalizeRecordDate_(record.date, config.timeZone)} — ` +
-          `${zone ? `${zone.name} ${zone.className}` : `เขต ${record.zoneId}`}`
-      ).setHeading(DocumentApp.ParagraphHeading.HEADING2);
+      if (blob) blobs.push(blob);
+    });
+    if (!blobs.length) return;
+
+    const zone = CLEANING_MESSENGER.ZONES.find(
+      (item) => item.id === Number(record.zoneId)
+    );
+    const dateLabel = thaiDateLabel_(
+      normalizeRecordDate_(record.date, config.timeZone)
+    );
+    const scoreLabel =
+      record.score === "" || record.score === null || record.score === undefined
+        ? "-"
+        : `${record.score}/3`;
+    const heading = body.appendParagraph(
+      `${zone ? `${zone.name} - ${zone.className}` : `เขต ${record.zoneId}`} ` +
+        `(วันที่: ${dateLabel})    คะแนน: ${scoreLabel}    ` +
+        `หมายเหตุ: ${String(record.notes || "-")}`
+    );
+    heading
+      .setSpacingBefore(10)
+      .setSpacingAfter(4)
+      .editAsText()
+      .setBold(true)
+      .setFontFamily("TH Sarabun New")
+      .setFontSize(13);
+
+    const photoTable = body.appendTable([["", "", ""]]);
+    photoTable.setBorderColor("#CBD5E1");
+    photoTable.setBorderWidth(0.5);
+    const row = photoTable.getRow(0);
+    for (let index = 0; index < 3; index += 1) {
+      const cell = row.getCell(index);
+      cell.setWidth(150);
+      cell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+      const paragraph = cell.getChild(0).asParagraph();
+      paragraph
+        .setAlignment(DocumentApp.HorizontalAlignment.CENTER)
+        .setSpacingBefore(2)
+        .setSpacingAfter(2);
+      if (!blobs[index]) {
+        paragraph.appendText("ไม่มีรูป").setForegroundColor("#64748B");
+        continue;
+      }
       try {
-        const image = body.appendImage(blob);
-        const width = image.getWidth();
-        const height = image.getHeight();
-        if (width > 420) {
-          image.setWidth(420);
-          image.setHeight(Math.round((height * 420) / width));
-        }
+        const image = paragraph.appendInlineImage(blobs[index]);
+        const width = Math.max(1, image.getWidth());
+        const height = Math.max(1, image.getHeight());
+        const scale = Math.min(140 / width, 105 / height);
+        image.setWidth(Math.max(1, Math.round(width * scale)));
+        image.setHeight(Math.max(1, Math.round(height * scale)));
         appended += 1;
       } catch (error) {
         console.error(`เพิ่มภาพลงรายงานไม่สำเร็จ: ${error}`);
+        paragraph.appendText("เปิดรูปไม่ได้").setForegroundColor("#B91C1C");
       }
-    });
+    }
+    body.appendParagraph("").setSpacingAfter(4);
   });
   if (!appended) body.appendParagraph("ไม่มีภาพประกอบที่เปิดใช้งานได้");
 }
 
 function fetchReportImageBlob_(url) {
-  if (!/^https?:\/\//i.test(String(url || ""))) return null;
+  const source = String(url || "");
+  const dataUrl = source.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+  if (dataUrl) {
+    try {
+      return Utilities.newBlob(
+        Utilities.base64Decode(dataUrl[2]),
+        dataUrl[1],
+        "report-image"
+      );
+    } catch (error) {
+      console.error(`อ่านรูปแบบ data URL ไม่สำเร็จ: ${error}`);
+      return null;
+    }
+  }
+  if (!/^https?:\/\//i.test(source)) return null;
   const options = {
     method: "get",
     followRedirects: true,
     muteHttpExceptions: true,
   };
-  if (/googleusercontent\.com|google\.com|googleapis\.com/i.test(url)) {
+  if (/googleusercontent\.com|google\.com|googleapis\.com/i.test(source)) {
     options.headers = { Authorization: `Bearer ${ScriptApp.getOAuthToken()}` };
   }
   try {
-    const response = UrlFetchApp.fetch(url, options);
+    const response = UrlFetchApp.fetch(source, options);
     if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
       return null;
     }
@@ -1734,6 +2070,14 @@ function createDailyCleaningPdfNow() {
   return report.url;
 }
 
+function createWeeklyCleaningPdfNow() {
+  const config = getCleaningMessengerConfig_();
+  const dateKey = dateKeyInTimeZone_(new Date(), config.timeZone);
+  const report = createWeeklyCleaningReportPdf_(config, dateKey);
+  console.log(report.url);
+  return report.url;
+}
+
 function createMonthlyCleaningPdfNow() {
   const config = getCleaningMessengerConfig_();
   const monthKey = dateKeyInTimeZone_(new Date(), config.timeZone).slice(0, 7);
@@ -1751,6 +2095,8 @@ function createMonthlyCleaningPdfNow() {
  * - ตารางสัปดาห์หน้า
  * - ตารางสัปดาห์ 1
  * - ตารางเดือนนี้
+ * - PDF วันนี้
+ * - PDF สัปดาห์นี้
  * - เมนู
  */
 function handleCleaningMessengerCommand_(text, senderId, config, metadata) {
@@ -1761,7 +2107,16 @@ function handleCleaningMessengerCommand_(text, senderId, config, metadata) {
   }
 
   const command = parseCleaningMessengerCommand_(text);
-  if (command.type === "daily_pdf" || command.type === "monthly_pdf") {
+  if (
+    command.type === "daily_pdf" ||
+    command.type === "weekly_pdf" ||
+    command.type === "monthly_pdf"
+  ) {
+    const todayKey = dateKeyInTimeZone_(new Date(), config.timeZone);
+    const requestedDateKey =
+      command.type === "weekly_pdf"
+        ? addDaysToDateKey_(todayKey, Number(command.weekOffset || 0) * 7)
+        : todayKey;
     const queued = enqueueCleaningReportJob_(
       command.type,
       senderId,
@@ -1769,6 +2124,11 @@ function handleCleaningMessengerCommand_(text, senderId, config, metadata) {
       {
         messageId: metadata && metadata.messageId,
         messagingType: "RESPONSE",
+        dateKey: requestedDateKey,
+        weekStartKey:
+          command.type === "weekly_pdf"
+            ? getSchoolWeekRange_(requestedDateKey).startKey
+            : undefined,
       }
     );
     sendMessengerReply_(
@@ -1833,6 +2193,19 @@ function parseCleaningMessengerCommand_(text) {
     )
   ) {
     return { type: "daily_pdf" };
+  }
+
+  if (
+    /(pdf.*(สัปดาห์นี้|สัปดาห์หน้า|สัปดาห์ก่อน|สัปดาห์ที่แล้ว|ประจำสัปดาห์|รายสัปดาห์)|(สัปดาห์นี้|สัปดาห์หน้า|สัปดาห์ก่อน|สัปดาห์ที่แล้ว|ประจำสัปดาห์|รายสัปดาห์).*pdf|ไฟล์.*(สัปดาห์นี้|สัปดาห์หน้า|สัปดาห์ก่อน|สัปดาห์ที่แล้ว|ประจำสัปดาห์|รายสัปดาห์)|(ส่ง|ขอ).*รายงาน.*(ประจำสัปดาห์|รายสัปดาห์))/i.test(
+      normalized
+    )
+  ) {
+    const weekOffset = /(สัปดาห์หน้า)/.test(normalized)
+      ? 1
+      : /(สัปดาห์ก่อน|สัปดาห์ที่แล้ว)/.test(normalized)
+      ? -1
+      : 0;
+    return { type: "weekly_pdf", weekOffset };
   }
 
   if (
@@ -2090,6 +2463,25 @@ function addDaysToDateKey_(dateKey, days) {
   return Utilities.formatDate(date, "UTC", "yyyy-MM-dd");
 }
 
+function getSchoolWeekRange_(dateKey) {
+  const parts = String(dateKey).split("-").map(Number);
+  const anchor = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  const weekday = anchor.getUTCDay();
+  const daysFromMonday = weekday === 0 ? 6 : weekday - 1;
+  const monday = new Date(anchor.getTime());
+  monday.setUTCDate(monday.getUTCDate() - daysFromMonday);
+  const startKey = Utilities.formatDate(monday, "UTC", "yyyy-MM-dd");
+  const dateKeys = [];
+  for (let index = 0; index < 5; index += 1) {
+    dateKeys.push(addDaysToDateKey_(startKey, index));
+  }
+  return {
+    startKey,
+    endKey: dateKeys[dateKeys.length - 1],
+    dateKeys,
+  };
+}
+
 function formatThaiDateRange_(startKey, endKey) {
   const start = String(startKey).split("-").map(Number);
   const end = String(endKey).split("-").map(Number);
@@ -2157,6 +2549,8 @@ function buildCleaningMessengerHelpMessage_() {
     "• ตารางเดือนนี้",
     "• สรุปเดือนนี้",
     "• PDF วันนี้",
+    "• PDF สัปดาห์นี้",
+    "• PDF สัปดาห์หน้า",
     "• PDF เดือนนี้",
     "• เมนู",
   ].join("\n");

@@ -72,6 +72,8 @@
 | `SEND_DAILY_PDF_REPORT` | `true` เพื่อส่ง PDF หลังสรุปสิ้นวัน |
 | `SEND_MONTHLY_PDF_REPORT` | `true` เพื่อส่ง PDF เดือนก่อนหน้าในวันทำการแรก |
 | `CLEANING_REPORT_MAX_IMAGES` | `6` (เลือกได้ 1–10 ภาพต่อรายงาน) |
+| `CLEANING_DAILY_REPORT_MAX_IMAGES` | `27` เพื่อรวมภาพครบ 9 เขต × 3 รูปในรายงานรายวัน |
+| `CLEANING_WEEKLY_REPORT_MAX_IMAGES` | `135` เพื่อรวมภาพครบ 5 วัน × 9 เขต × 3 รูปในรายงานรายสัปดาห์ |
 
 `META_WEBHOOK_VERIFY_TOKEN` จะถูกสร้างให้อัตโนมัติ ห้ามนำ `META_PAGE_ACCESS_TOKEN` ไปใส่ใน `App.tsx`, README, Issue, Pull Request หรือไฟล์สาธารณะใด ๆ
 
@@ -185,6 +187,8 @@ notifyCleaningDataChanged();
 | `ตารางเดือนนี้` | ส่งตารางแยกเป็นข้อความสัปดาห์ละหนึ่งข้อความ |
 | `สรุปเดือนนี้` | สถิติภาพรวมของเดือนปัจจุบัน |
 | `PDF วันนี้` | สร้าง PDF รายวันพร้อมภาพจากการตรวจ แล้วส่งกลับในแชท |
+| `PDF สัปดาห์นี้` | สร้าง PDF ตารางคะแนน 5 วัน สรุปเวรผู้รับผิดชอบ และภาพหลักฐาน 3 รูปต่อรายการ |
+| `PDF สัปดาห์หน้า` | สร้าง PDF ของสัปดาห์ถัดไป โดยใช้ช่วงวันจันทร์–ศุกร์ |
 | `PDF เดือนนี้` | สร้าง PDF สรุปรายเดือน แล้วส่งกลับในแชท |
 | `เมนู` | แสดงรายการคำสั่งทั้งหมด |
 
@@ -200,7 +204,7 @@ notifyCleaningDataChanged();
 
 รายงาน PDF ใช้เวลาประมาณ 1–2 นาที เพราะระบบสร้างเอกสารในงานเบื้องหลัง และเก็บไฟล์ไว้ในโฟลเดอร์ **Cleaning System Reports** ใน Google Drive ของบัญชีที่ Deploy เว็บแอป
 
-ก่อนใช้ PDF ครั้งแรก ให้รัน `initializeCleaningMessengerConfig` แล้วรัน `createDailyCleaningPdfNow` หนึ่งครั้ง เพื่ออนุญาตสิทธิ์ Google Docs, Google Drive และ URL Fetch จากนั้นสร้าง **เวอร์ชันใหม่** ใน Deployment เดิมโดยคง URL `/exec` เดิมไว้ หาก Meta แนบไฟล์ไม่สำเร็จ ระบบจะส่งลิงก์ Drive เป็นทางสำรอง
+ก่อนใช้ PDF ครั้งแรก ให้รัน `initializeCleaningMessengerConfig` แล้วรัน `createDailyCleaningPdfNow` และ `createWeeklyCleaningPdfNow` อย่างละหนึ่งครั้ง เพื่ออนุญาตสิทธิ์ Google Docs, Google Drive และ URL Fetch จากนั้นสร้าง **เวอร์ชันใหม่** ใน Deployment เดิมโดยคง URL `/exec` เดิมไว้ หาก Meta แนบไฟล์ไม่สำเร็จ ระบบจะส่งลิงก์ Drive เป็นทางสำรอง
 
 ## 11. ทดสอบสถานการณ์จริง
 
