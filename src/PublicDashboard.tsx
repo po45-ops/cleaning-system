@@ -423,7 +423,7 @@ export default function PublicDashboard({
                 <div>
                   <h3 className="font-black text-slate-800">สถานะพื้นที่ตรวจวันนี้</h3>
                   <p className="text-xs text-slate-500">
-                    สถานะล่าสุดพร้อมสรุปสั้นของแต่ละเขตในจุดเดียว
+                    สถานะล่าสุดพร้อมสรุปคะแนนและหมายเหตุของแต่ละเขตในจุดเดียว
                   </p>
                 </div>
               </div>
@@ -446,6 +446,10 @@ export default function PublicDashboard({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {dashboard.zoneSummaries.map((zone) => {
                 const meta = stateMeta[zone.state];
+                const note = zone.record?.notes?.trim();
+                const needsReason =
+                  Boolean(zone.record) && Number(zone.record?.score) < 3;
+
                 return (
                   <div
                     key={zone.id}
@@ -481,6 +485,27 @@ export default function PublicDashboard({
                         <p className="mt-2 text-xs leading-relaxed text-slate-600">
                           {getZonePublicSummary(zone)}
                         </p>
+
+                        {note ? (
+                          <div className="mt-3 rounded-xl border border-amber-200/80 bg-white/85 px-3 py-2.5 shadow-sm">
+                            <div className="mb-1 flex items-center gap-1.5 text-amber-700">
+                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                              <span className="text-[11px] font-black">
+                                หมายเหตุ / ปัญหาที่พบ
+                              </span>
+                            </div>
+                            <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
+                              {note}
+                            </p>
+                          </div>
+                        ) : needsReason ? (
+                          <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
+                            <span className="font-bold text-slate-600">
+                              หมายเหตุ / ปัญหาที่พบ:
+                            </span>{" "}
+                            ยังไม่ได้ระบุรายละเอียดสาเหตุที่ได้คะแนนต่ำกว่า 3
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -615,7 +640,7 @@ export default function PublicDashboard({
               ) : (
                 <div className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-500">
                   <Shield className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                  หน้าสาธารณะแสดงเฉพาะข้อมูลสรุป ไม่แสดงรูปหลักฐานหรือหมายเหตุ
+                  หน้าสาธารณะแสดงข้อมูลสรุปและหมายเหตุจากการตรวจ แต่ไม่แสดงรูปหลักฐาน
                 </div>
               )}
             </article>
