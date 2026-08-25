@@ -13,7 +13,7 @@ const getTodayKey = () => {
 };
 
 describe("PublicDashboard", () => {
-  it("uses the latest record per day and zone without rendering private fields", () => {
+  it("uses the latest record per day and zone, shows the latest note, and hides evidence images", () => {
     const today = getTodayKey();
     const html = renderToStaticMarkup(
       <PublicDashboard
@@ -24,7 +24,7 @@ describe("PublicDashboard", () => {
             zoneId: 1,
             score: 3,
             status: "approved",
-            notes: "OLD_PRIVATE_NOTE",
+            notes: "OLD_NOTE",
             images: ["data:image/jpeg;base64,OLD_PRIVATE_IMAGE"],
           },
           {
@@ -33,7 +33,7 @@ describe("PublicDashboard", () => {
             zoneId: 1,
             score: 0,
             status: "rejected",
-            notes: "NEW_PRIVATE_NOTE",
+            notes: "NEW_NOTE",
             images: ["data:image/jpeg;base64,NEW_PRIVATE_IMAGE"],
           },
         ]}
@@ -53,7 +53,8 @@ describe("PublicDashboard", () => {
     expect(text).toContain("ไม่ผ่าน");
     expect(text).toContain("0/3");
     expect(text).not.toContain("3/3");
-    expect(html).not.toContain("PRIVATE_NOTE");
+    expect(text).toContain("NEW_NOTE");
+    expect(text).not.toContain("OLD_NOTE");
     expect(html).not.toContain("PRIVATE_IMAGE");
   });
 });
