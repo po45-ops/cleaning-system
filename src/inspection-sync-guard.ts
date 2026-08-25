@@ -180,10 +180,9 @@ const mergePendingStatusUpdates = async (response: Response) => {
 };
 
 /**
- * App.tsx still contains the previous Apps Script deployment URL. Redirect all
- * cleaning API traffic to the current deployment before it leaves the browser,
- * and keep successful approve/reject results stable until Google Sheets reads
- * back the new status.
+ * App.tsx now points directly at the current Apps Script deployment. Keep the
+ * legacy rewrite as a fallback for stale cached bundles, and keep successful
+ * approve/reject results stable until Google Sheets reads back the new status.
  */
 export const installInspectionSyncGuard = () => {
   if (installed || typeof window === "undefined") return;
