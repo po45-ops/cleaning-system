@@ -1,5 +1,7 @@
-const CLEANING_DATA_API_MARKER =
-  "script.google.com/macros/s/AKfycbyTSx3ggaJfXtYd_rQ67FoI5pPb8y_LXcTAm6RiSnkf34uiZL5GZBStGVMXyGCHQ5JfEA/exec";
+const LEGACY_CLEANING_DATA_API_URL =
+  "https://script.google.com/macros/s/AKfycbyTSx3ggaJfXtYd_rQ67FoI5pPb8y_LXcTAm6RiSnkf34uiZL5GZBStGVMXyGCHQ5JfEA/exec";
+const CURRENT_CLEANING_DATA_API_URL =
+  "https://script.google.com/macros/s/AKfycbwfmqSlIqJ0-2CoAQ1Uv7nrL47x3zsqToUWP0brNiHBnJGFIvz450w33ANBmltvOjNPTg/exec";
 
 const OPTIMISTIC_STATUS_TTL_MS = 2 * 60 * 1000;
 
@@ -43,7 +45,24 @@ const getRequestUrl = (input: RequestInfo | URL): string => {
 };
 
 const isCleaningDataRequest = (url: string): boolean =>
-  url.includes(CLEANING_DATA_API_MARKER);
+  url.includes(LEGACY_CLEANING_DATA_API_URL) ||
+  url.includes(CURRENT_CLEANING_DATA_API_URL);
+
+const rewriteCleaningDataRequest = (
+  input: RequestInfo | URL
+): RequestInfo | URL => {
+  const originalUrl = getRequestUrl(input);
+  if (!originalUrl.includes(LEGACY_CLEANING_DATA_API_URL)) return input;
+
+  const rewrittenUrl = originalUrl.replace(
+    LEGACY_CLEANING_DATA_API_URL,
+    CURRENT_CLEANING_DATA_API_URL
+  );
+
+  if (typeof input === "string") return rewrittenUrl;
+  if (input instanceof URL) return new URL(rewrittenUrl);
+  return new Request(rewrittenUrl, input);
+};
 
 const mutationKey = (update: PendingStatusUpdate): string =>
   update.id
@@ -158,11 +177,10 @@ const mergePendingStatusUpdates = async (response: Response) => {
 };
 
 /**
- * Google Apps Script can acknowledge a write before a following read reflects
- * the new Sheet value. App.tsx performs an immediate refresh after approval,
- * so that stale read used to put the same card back into the pending queue.
- * This guard keeps a successful approve/reject status during that short window
- * and removes itself as soon as the API confirms the new status.
+ * App.tsx still contains the previous Apps Script deployment URL. Redirect all
+ * cleaning API traffic to the current deployment before it leaves the browser,
+ * and keep successful approve/reject results stable until Google Sheets reads
+ * back the new status.
  */
 export const installInspectionSyncGuard = () => {
   if (installed || typeof window === "undefined") return;
@@ -171,13 +189,17 @@ export const installInspectionSyncGuard = () => {
   const originalFetch = window.fetch.bind(window);
 
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = getRequestUrl(input);
+    const originalUrl = getRequestUrl(input);
+    const requestInput = rewriteCleaningDataRequest(input);
+    const requestUrl = getRequestUrl(requestInput);
     const method = String(
       init?.method || (input instanceof Request ? input.method : "GET")
     ).toUpperCase();
 
-    const response = await originalFetch(input, init);
-    if (!isCleaningDataRequest(url)) return response;
+    const response = await originalFetch(requestInput, init);
+    if (!isCleaningDataRequest(originalUrl) && !isCleaningDataRequest(requestUrl)) {
+      return response;
+    }
 
     if (method === "POST") {
       await rememberSuccessfulStatusUpdate(response, init?.body);
