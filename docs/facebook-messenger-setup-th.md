@@ -73,7 +73,7 @@
 | `SEND_MONTHLY_PDF_REPORT` | `true` เพื่อส่ง PDF เดือนก่อนหน้าในวันทำการแรก |
 | `CLEANING_REPORT_MAX_IMAGES` | `6` (เลือกได้ 1–10 ภาพต่อรายงาน) |
 | `CLEANING_DAILY_REPORT_MAX_IMAGES` | `27` เพื่อรวมภาพครบ 9 เขต × 3 รูปในรายงานรายวัน |
-| `CLEANING_WEEKLY_REPORT_MAX_IMAGES` | `135` เพื่อรวมภาพครบ 5 วัน × 9 เขต × 3 รูปในรายงานรายสัปดาห์ |
+| `CLEANING_WEEKLY_REPORT_MAX_IMAGES` | `45` (ค่าสูงสุด) เพื่อลดโอกาสเกินเวลา/หน่วยความจำของ Apps Script |
 
 `META_WEBHOOK_VERIFY_TOKEN` จะถูกสร้างให้อัตโนมัติ ห้ามนำ `META_PAGE_ACCESS_TOKEN` ไปใส่ใน `App.tsx`, README, Issue, Pull Request หรือไฟล์สาธารณะใด ๆ
 
@@ -168,7 +168,7 @@ notifyCleaningDataChanged();
 
 ```text
 • เขต 2 · ป.2
-  ผู้รับผิดชอบ: กลุ่มที่ 4 (สภา04) — วรัชญา · มหายศนันท์
+  ผู้รับผิดชอบ: กลุ่มที่ 4 (สภา04) — นักเรียนที่ผู้ดูแลกรอกในระบบ
 ```
 
 ข้อความเวลา 09:00, 12:00, 15:00 และสรุปสิ้นวันจะแสดงรายชื่อรูปแบบนี้สำหรับทุกเขตที่ยังไม่ได้รายงาน
@@ -202,9 +202,9 @@ notifyCleaningDataChanged();
 
 หลังคัดลอกโค้ดเวอร์ชันใหม่เข้า Apps Script ต้องสร้างเวอร์ชันใหม่ใน Deployment เดิม จากนั้นทัก Page ว่า `เมนู` เพื่อทดสอบ
 
-รายงาน PDF ใช้เวลาประมาณ 1–2 นาที เพราะระบบสร้างเอกสารในงานเบื้องหลัง และเก็บไฟล์ไว้ในโฟลเดอร์ **Cleaning System Reports** ใน Google Drive ของบัญชีที่ Deploy เว็บแอป
+รายงาน PDF ใช้เวลาประมาณ 1–2 นาที เพราะระบบสร้างเอกสารในงานเบื้องหลัง และเก็บไฟล์ไว้ในโฟลเดอร์ **Cleaning System Reports** ใน Google Drive ของบัญชีที่ Deploy เว็บแอป รายงานทางการจะรวมเฉพาะรายการที่ครูอนุมัติแล้ว
 
-ก่อนใช้ PDF ครั้งแรก ให้รัน `initializeCleaningMessengerConfig` แล้วรัน `createDailyCleaningPdfNow` และ `createWeeklyCleaningPdfNow` อย่างละหนึ่งครั้ง เพื่ออนุญาตสิทธิ์ Google Docs, Google Drive และ URL Fetch จากนั้นสร้าง **เวอร์ชันใหม่** ใน Deployment เดิมโดยคง URL `/exec` เดิมไว้ หาก Meta แนบไฟล์ไม่สำเร็จ ระบบจะส่งลิงก์ Drive เป็นทางสำรอง
+ก่อนใช้ PDF ครั้งแรก ให้รัน `initializeCleaningMessengerConfig` แล้วรัน `createDailyCleaningPdfNow` และ `createWeeklyCleaningPdfNow` อย่างละหนึ่งครั้ง เพื่ออนุญาตสิทธิ์ Google Docs, Google Drive และ URL Fetch จากนั้นสร้าง **เวอร์ชันใหม่** ใน Deployment เดิมโดยคง URL `/exec` เดิมไว้ หาก Meta แนบไฟล์ไม่สำเร็จ ระบบจะแจ้งข้อผิดพลาดโดยไม่เปิดเผยลิงก์ Drive ส่วนตัว
 
 ## 11. ทดสอบสถานการณ์จริง
 

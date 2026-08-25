@@ -23,6 +23,8 @@ const CLEANING_MESSENGER = Object.freeze({
   REPORT_QUEUE_PROPERTY: "CLEANING_REPORT_JOB_QUEUE_V1",
   REPORT_TRIGGER_HANDLER: "processCleaningReportJobs",
   MAX_REPORT_QUEUE_ITEMS: 12,
+  MAX_REPORT_IMAGE_BYTES: 5 * 1024 * 1024,
+  MAX_REPORT_IMAGE_DATA_CHARS: 7 * 1024 * 1024,
   STATE_RETENTION_DAYS: 45,
   TOTAL_ZONES: 9,
   ZONES: [
@@ -63,7 +65,7 @@ function initializeCleaningMessengerConfig() {
     SEND_MONTHLY_PDF_REPORT: "true",
     CLEANING_REPORT_MAX_IMAGES: "6",
     CLEANING_DAILY_REPORT_MAX_IMAGES: "27",
-    CLEANING_WEEKLY_REPORT_MAX_IMAGES: "135",
+    CLEANING_WEEKLY_REPORT_MAX_IMAGES: "45",
     SCHOOL_NAME: "โรงเรียนไตรธารวิทยา",
   };
 
@@ -307,10 +309,10 @@ function getCleaningMessengerConfig_() {
     weeklyReportMaxImages: Math.max(
       3,
       Math.min(
-        135,
+        45,
         Number(
-          properties.getProperty("CLEANING_WEEKLY_REPORT_MAX_IMAGES") || "135"
-        ) || 135
+          properties.getProperty("CLEANING_WEEKLY_REPORT_MAX_IMAGES") || "45"
+        ) || 45
       )
     ),
     dataUrl:
@@ -468,6 +470,10 @@ function isFailedRecord_(record) {
     return false;
   }
   return Number(record.score) === 0;
+}
+
+function isApprovedRecord_(record) {
+  return String((record && record.status) || "").toLowerCase() === "approved";
 }
 
 function normalizeRecordDate_(value, timeZone) {
@@ -993,46 +999,54 @@ function previewCouncilDutyForToday() {
  * back to the approved Messenger recipient.
  */
 function enqueueCleaningReportJob_(type, senderId, config, options) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
   const properties = PropertiesService.getScriptProperties();
-  const raw = properties.getProperty(CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY);
-  let queue = [];
   try {
-    queue = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(queue)) queue = [];
-  } catch (error) {
-    queue = [];
-  }
+    const raw = properties.getProperty(
+      CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY
+    );
+    let queue = [];
+    try {
+      queue = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(queue)) queue = [];
+    } catch (error) {
+      queue = [];
+    }
 
-  const messageId = String((options && options.messageId) || "");
-  if (messageId && queue.some((item) => item.messageId === messageId)) {
-    return false;
-  }
+    const messageId = String((options && options.messageId) || "");
+    if (messageId && queue.some((item) => item.messageId === messageId)) {
+      return false;
+    }
 
-  const now = new Date();
-  const dateKey =
-    (options && options.dateKey) || dateKeyInTimeZone_(now, config.timeZone);
-  const monthKey =
-    (options && options.monthKey) || String(dateKey).slice(0, 7);
-  const weekStartKey =
-    (options && options.weekStartKey) || getSchoolWeekRange_(dateKey).startKey;
-  queue.push({
-    id: Utilities.getUuid(),
-    type,
-    senderId: String(senderId),
-    dateKey,
-    monthKey,
-    weekStartKey,
-    messageId,
-    messagingType: String(
-      (options && options.messagingType) || "RESPONSE"
-    ).toUpperCase(),
-    requestedAt: now.toISOString(),
-  });
-  queue = queue.slice(-CLEANING_MESSENGER.MAX_REPORT_QUEUE_ITEMS);
-  properties.setProperty(
-    CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY,
-    JSON.stringify(queue)
-  );
+    const now = new Date();
+    const dateKey =
+      (options && options.dateKey) || dateKeyInTimeZone_(now, config.timeZone);
+    const monthKey =
+      (options && options.monthKey) || String(dateKey).slice(0, 7);
+    const weekStartKey =
+      (options && options.weekStartKey) || getSchoolWeekRange_(dateKey).startKey;
+    queue.push({
+      id: Utilities.getUuid(),
+      type,
+      senderId: String(senderId),
+      dateKey,
+      monthKey,
+      weekStartKey,
+      messageId,
+      messagingType: String(
+        (options && options.messagingType) || "RESPONSE"
+      ).toUpperCase(),
+      requestedAt: now.toISOString(),
+    });
+    queue = queue.slice(-CLEANING_MESSENGER.MAX_REPORT_QUEUE_ITEMS);
+    properties.setProperty(
+      CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY,
+      JSON.stringify(queue)
+    );
+  } finally {
+    lock.releaseLock();
+  }
   ensureCleaningReportJobTrigger_();
   return true;
 }
@@ -1064,6 +1078,7 @@ function processCleaningReportJobs() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return;
 
+  let jobs = [];
   try {
     const properties = PropertiesService.getScriptProperties();
     const raw = properties.getProperty(
@@ -1077,35 +1092,46 @@ function processCleaningReportJobs() {
       queue = [];
     }
 
-    const jobs = queue.splice(0, 2);
+    jobs = queue.splice(0, 2);
     properties.setProperty(
       CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY,
       JSON.stringify(queue)
     );
-    const config = getCleaningMessengerConfig_();
-    jobs.forEach((job) => {
-      try {
-        processCleaningReportJob_(job, config);
-      } catch (error) {
-        console.error(
-          `สร้างรายงาน PDF ไม่สำเร็จ: ${(error && error.stack) || error}`
-        );
-        try {
-          sendMessengerReply_(
-            "⚠️ สร้างรายงาน PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
-            job.senderId,
-            config
-          );
-        } catch (sendError) {
-          console.error(`ส่งข้อความแจ้งข้อผิดพลาดไม่สำเร็จ: ${sendError}`);
-        }
-      }
-    });
-
-    removeCleaningReportJobTriggers_();
-    if (queue.length) ensureCleaningReportJobTrigger_();
   } finally {
     lock.releaseLock();
+  }
+
+  const config = getCleaningMessengerConfig_();
+  jobs.forEach((job) => {
+    try {
+      processCleaningReportJob_(job, config);
+    } catch (error) {
+      console.error(
+        `สร้างรายงาน PDF ไม่สำเร็จ: ${(error && error.stack) || error}`
+      );
+      try {
+        sendMessengerReply_(
+          "⚠️ สร้างรายงาน PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+          job.senderId,
+          config
+        );
+      } catch (sendError) {
+        console.error(`ส่งข้อความแจ้งข้อผิดพลาดไม่สำเร็จ: ${sendError}`);
+      }
+    }
+  });
+
+  removeCleaningReportJobTriggers_();
+  const remainingRaw = PropertiesService.getScriptProperties().getProperty(
+    CLEANING_MESSENGER.REPORT_QUEUE_PROPERTY
+  );
+  try {
+    const remainingQueue = remainingRaw ? JSON.parse(remainingRaw) : [];
+    if (Array.isArray(remainingQueue) && remainingQueue.length) {
+      ensureCleaningReportJobTrigger_();
+    }
+  } catch (error) {
+    console.error(`อ่านคิวรายงานที่เหลือไม่สำเร็จ: ${error}`);
   }
 }
 
@@ -1126,32 +1152,19 @@ function processCleaningReportJob_(job, config) {
       job.messagingType === "UPDATE" ? "UPDATE" : "RESPONSE",
   });
 
-  let attachmentSent = false;
-  try {
-    sendMessengerPdfAttachmentToOne_(
-      report.blob,
-      job.senderId,
-      reportConfig
-    );
-    attachmentSent = true;
-  } catch (error) {
-    console.error(`ส่ง PDF เป็นไฟล์แนบไม่สำเร็จ ใช้ลิงก์ Drive แทน: ${error}`);
-  }
+  sendMessengerPdfAttachmentToOne_(report.blob, job.senderId, reportConfig);
 
   const lines = [
-    attachmentSent ? "✅ จัดทำและส่งไฟล์ PDF แล้ว" : "✅ จัดทำไฟล์ PDF แล้ว",
+    "✅ จัดทำและส่งไฟล์ PDF แล้ว",
     report.title,
     "",
     report.summary,
-    "",
-    "📄 เปิดไฟล์จาก Google Drive",
-    report.url,
   ];
   sendMessengerTextToOne_(lines.join("\n"), job.senderId, reportConfig);
 }
 
 function createDailyCleaningReportPdf_(config, dateKey) {
-  const records = fetchCleaningRecords_(config);
+  const records = fetchCleaningRecords_(config).filter(isApprovedRecord_);
   const snapshot = buildCleaningSnapshotForDate_(records, dateKey, config);
   const reportFolder = getCleaningReportFolder_();
   const timestamp = Utilities.formatDate(
@@ -1236,7 +1249,7 @@ function createDailyCleaningReportPdf_(config, dateKey) {
 }
 
 function createWeeklyCleaningReportPdf_(config, dateKey) {
-  const records = fetchCleaningRecords_(config);
+  const records = fetchCleaningRecords_(config).filter(isApprovedRecord_);
   const summary = buildWeeklyCleaningSummary_(records, dateKey, config);
   const reportFolder = getCleaningReportFolder_();
   const timestamp = Utilities.formatDate(
@@ -1356,7 +1369,7 @@ function createWeeklyCleaningReportPdf_(config, dateKey) {
 }
 
 function createMonthlyCleaningReportPdf_(config, monthKey) {
-  const records = fetchCleaningRecords_(config);
+  const records = fetchCleaningRecords_(config).filter(isApprovedRecord_);
   const summary = buildMonthlyCleaningSummary_(records, monthKey, config);
   const reportFolder = getCleaningReportFolder_();
   const timestamp = Utilities.formatDate(
@@ -1907,36 +1920,52 @@ function appendReportImages_(body, records, maxImages, config) {
 }
 
 function fetchReportImageBlob_(url) {
-  const source = String(url || "");
-  const dataUrl = source.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+  const source = String(url || "").trim();
+  const dataUrl = source.match(
+    /^data:(image\/(?:jpeg|png|webp));base64,([a-z0-9+/=]+)$/i
+  );
   if (dataUrl) {
+    if (dataUrl[2].length > CLEANING_MESSENGER.MAX_REPORT_IMAGE_DATA_CHARS) {
+      console.error("ข้ามรูป data URL ที่มีขนาดใหญ่เกินกำหนด");
+      return null;
+    }
     try {
-      return Utilities.newBlob(
-        Utilities.base64Decode(dataUrl[2]),
-        dataUrl[1],
-        "report-image"
-      );
+      const bytes = Utilities.base64Decode(dataUrl[2]);
+      if (bytes.length > CLEANING_MESSENGER.MAX_REPORT_IMAGE_BYTES) {
+        console.error("ข้ามรูป data URL ที่มีขนาดใหญ่เกินกำหนด");
+        return null;
+      }
+      return Utilities.newBlob(bytes, dataUrl[1], "report-image");
     } catch (error) {
       console.error(`อ่านรูปแบบ data URL ไม่สำเร็จ: ${error}`);
       return null;
     }
   }
-  if (!/^https?:\/\//i.test(source)) return null;
+  const urlParts = source.match(/^https:\/\/([^/:?#]+)(?:[/:?#]|$)/i);
+  if (!urlParts) return null;
+  const host = String(urlParts[1] || "").toLowerCase().replace(/\.$/, "");
+  if (!(host === "googleusercontent.com" || /\.googleusercontent\.com$/.test(host))) {
+    console.error(`ข้ามโฮสต์รูปภาพที่ไม่ได้รับอนุญาต: ${host || "unknown"}`);
+    return null;
+  }
   const options = {
     method: "get",
-    followRedirects: true,
+    followRedirects: false,
     muteHttpExceptions: true,
   };
-  if (/googleusercontent\.com|google\.com|googleapis\.com/i.test(source)) {
-    options.headers = { Authorization: `Bearer ${ScriptApp.getOAuthToken()}` };
-  }
   try {
     const response = UrlFetchApp.fetch(source, options);
     if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
       return null;
     }
     const blob = response.getBlob();
-    return /^image\//i.test(blob.getContentType()) ? blob : null;
+    const contentType = String(blob.getContentType() || "").toLowerCase();
+    if (!/^image\/(?:jpeg|png|webp)$/.test(contentType)) return null;
+    if (blob.getBytes().length > CLEANING_MESSENGER.MAX_REPORT_IMAGE_BYTES) {
+      console.error("ข้ามรูปจาก URL ที่มีขนาดใหญ่เกินกำหนด");
+      return null;
+    }
+    return blob;
   } catch (error) {
     console.error(`โหลดภาพรายงานไม่สำเร็จ: ${error}`);
     return null;

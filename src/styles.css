@@ -1,4 +1,33 @@
-.App {
-  font-family: sans-serif;
-  text-align: center;
+@import "tailwindcss";
+
+html {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Keep Thai report headings optically centered in browser, print, and PDF. */
+.formal-report-table thead tr {
+  height: 52px !important;
+}
+
+.formal-report-table thead th {
+  vertical-align: middle !important;
+  text-align: center !important;
+  line-height: 1.15 !important;
+  padding: 7px 8px 15px !important;
+}
+
+.formal-report-table th,
+.formal-report-table td {
+  vertical-align: middle !important;
+}
+
+@media print {
+  .formal-report-table thead tr {
+    height: 50px !important;
+  }
+
+  .formal-report-table thead th {
+    line-height: 1.15 !important;
+    padding: 6px 7px 14px !important;
+  }
 }

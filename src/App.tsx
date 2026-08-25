@@ -1,6 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
-import * as XLSX from "xlsx-js-style";
-import html2pdf from "html2pdf.js";
+import type { WorkSheet } from "xlsx-js-style";
+import {
+  getAcademicWeekNumber,
+  isAcademicWeekInTerm,
+} from "./report-utils";
+import {
+  createPasswordVerifier,
+  verifyPassword,
+  type PasswordVerifier,
+} from "./password-utils";
+import {
+  COUNCIL_ACCOUNT_IDS,
+  getDefaultStudentCredentials,
+  type StudentCredential,
+} from "./student-credentials";
 import {
   AlignmentType,
   BorderStyle,
@@ -43,9 +56,136 @@ import {
   Sparkles,
 } from "lucide-react";
 
+type InspectionStatus = "pending" | "approved" | "rejected";
+
+type InspectionRecord = {
+  id: string | number;
+  date: string;
+  zoneId: string | number;
+  score: string | number | null;
+  notes: string;
+  status: InspectionStatus;
+  images: string[];
+  updatedAt?: string;
+  timestamp?: string;
+  createdAt?: string;
+};
+
+type InspectionInput = Partial<Pick<InspectionRecord, "id" | "notes" | "status" | "images">> & {
+  date: string;
+  zoneId: string | number;
+  score: string | number;
+};
+
+type AuthUser = {
+  role: "admin" | "student";
+  id?: string;
+};
+
+type ApiResponse<T> = {
+  status?: string;
+  message?: string;
+  data?: T;
+};
+
+type AppTab = "student" | "teacher" | "calendar" | "report" | "users";
+
+type LoginMode = "student" | "admin";
+
+type LoginScreenProps = {
+  onLogin: React.Dispatch<React.SetStateAction<AuthUser | null>>;
+  schoolLogo: string;
+  studentCredentials: StudentCredential[];
+  adminCredential: PasswordVerifier | null;
+  setAdminCredential: React.Dispatch<
+    React.SetStateAction<PasswordVerifier | null>
+  >;
+};
+
+type StudentFormState = {
+  date: string;
+  zoneId: string;
+  score: number | null;
+  notes: string;
+};
+
+type StudentFormProps = {
+  onSave: (data: InspectionRecord) => void;
+  inspections: InspectionRecord[];
+};
+
+type CalendarStatus = "complete" | "partial" | "missing" | "future" | "weekend";
+
+type CalendarDayInfo = {
+  key: string;
+  status: CalendarStatus;
+  records: InspectionRecord[];
+  checkedCount: number;
+  isWeekend: boolean;
+  isFuture: boolean;
+};
+
+type TeacherApprovalProps = {
+  inspections: InspectionRecord[];
+  updateStatus: (
+    id: InspectionRecord["id"],
+    status: InspectionStatus
+  ) => Promise<boolean>;
+  updateInspection: (item: InspectionRecord) => Promise<boolean>;
+  deleteInspection: (id: InspectionRecord["id"]) => Promise<boolean>;
+  userRole: AuthUser["role"];
+};
+
+type ReportSettings = {
+  president: string;
+  teacher: string;
+  director: string;
+  headStudentAffairs: string;
+  term: string;
+  year: string;
+  semesterStart: string;
+};
+
+type ReportViewProps = {
+  inspections: InspectionRecord[];
+  schoolLogo: string;
+  setSchoolLogo: React.Dispatch<React.SetStateAction<string>>;
+  updateInspection: (item: InspectionRecord) => Promise<boolean>;
+  createInspection: (item: InspectionInput) => Promise<InspectionRecord | false>;
+};
+
+type UserManagementProps = {
+  credentials: StudentCredential[];
+  setCredentials: React.Dispatch<React.SetStateAction<StudentCredential[]>>;
+  adminCredential: PasswordVerifier | null;
+  setAdminCredential: React.Dispatch<
+    React.SetStateAction<PasswordVerifier | null>
+  >;
+};
+
+type SpreadsheetRow = Array<string | number>;
+type SpreadsheetWorksheet = WorkSheet;
+type SpreadsheetStyleOptions = {
+  titleRows?: number[];
+  headerRows?: number[];
+  tableStartRow?: number;
+  totalRows?: number[];
+};
+type WordAlignment = (typeof AlignmentType)[keyof typeof AlignmentType];
+
 // === URL ฐานข้อมูล Google Sheets ของคุณ ===
 const SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbyTSx3ggaJfXtYd_rQ67FoI5pPb8y_LXcTAm6RiSnkf34uiZL5GZBStGVMXyGCHQ5JfEA/exec";
+const STUDENT_CREDENTIALS_KEY = "cleaning_student_credentials_v3";
+const ADMIN_CREDENTIAL_KEY = "cleaning_admin_credential_v2";
+const LEGACY_PLAINTEXT_CREDENTIALS_KEY = "cleaning_student_creds";
+const LEGACY_SEED_KEY = "cleaning_student_creds_seed_9_groups_v1";
+const PREVIOUS_HASHED_CREDENTIALS_KEY = "cleaning_student_credentials_v2";
+const LEGACY_CREDENTIAL_KEYS = [
+  LEGACY_PLAINTEXT_CREDENTIALS_KEY,
+  LEGACY_SEED_KEY,
+  PREVIOUS_HASHED_CREDENTIALS_KEY,
+];
 
 // --- ข้อมูลพื้นฐาน ---
 const ZONES = [
@@ -152,7 +292,7 @@ const getDefaultWeekday = () => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-const formatThaiDateShort = (dateStr) => {
+const formatThaiDateShort = (dateStr: string | Date) => {
   if (!dateStr) return "";
   const d = new Date(dateStr);
   const months = [
@@ -173,24 +313,27 @@ const formatThaiDateShort = (dateStr) => {
 };
 
 // 🚀 ฟังก์ชันเสริมเพื่อเคลียร์ Timezone และแปลงวันที่ใน Sheet ให้เป็น YYYY-MM-DD เป๊ะๆ
-const formatDateKey = (dateStr) => {
+const formatDateKey = (dateStr: string | Date) => {
   if (!dateStr) return "";
   const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr;
+  if (isNaN(d.getTime())) return String(dateStr);
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 };
 
-const getInspectionStatusPriority = (status) => {
+const getInspectionStatusPriority = (status: string) => {
   if (status === "approved") return 3;
   if (status === "pending") return 2;
   if (status === "rejected") return 1;
   return 0;
 };
 
-const pickPreferredInspection = (current, candidate) => {
+const pickPreferredInspection = (
+  current: InspectionRecord | undefined,
+  candidate: InspectionRecord
+): InspectionRecord => {
   if (!current) return candidate;
 
   const currentPriority = getInspectionStatusPriority(current.status);
@@ -205,7 +348,10 @@ const pickPreferredInspection = (current, candidate) => {
 };
 
 // หากเขตเดิมส่งซ้ำในวันเดียวกัน ให้ข้อมูลที่มี ID ใหม่กว่าแทนข้อมูลเดิมเสมอ
-const pickLatestInspection = (current, candidate) => {
+const pickLatestInspection = (
+  current: InspectionRecord | undefined,
+  candidate: InspectionRecord
+): InspectionRecord => {
   if (!current) return candidate;
   const currentId = Number(current.id) || 0;
   const candidateId = Number(candidate.id) || 0;
@@ -213,8 +359,10 @@ const pickLatestInspection = (current, candidate) => {
 };
 
 // ป้องกันข้อมูลซ้ำทั้งกรณี ID ซ้ำ และกรณีเขตเดิมถูกส่งซ้ำในวันเดียวกัน
-const deduplicateInspections = (items) => {
-  const recordsById = new Map();
+const deduplicateInspections = (
+  items: InspectionRecord[]
+): InspectionRecord[] => {
+  const recordsById = new Map<string, InspectionRecord>();
 
   items.forEach((item, index) => {
     const id = String(item.id || "").trim();
@@ -225,7 +373,7 @@ const deduplicateInspections = (items) => {
     );
   });
 
-  const recordsByDateAndZone = new Map();
+  const recordsByDateAndZone = new Map<string, InspectionRecord>();
   Array.from(recordsById.values()).forEach((item, index) => {
     const date = formatDateKey(item.date);
     const zoneId = Number(item.zoneId);
@@ -239,13 +387,18 @@ const deduplicateInspections = (items) => {
   return Array.from(recordsByDateAndZone.values());
 };
 
-const compressImage = (file) => {
-  return new Promise((resolve) => {
+const compressImage = (file: File): Promise<string> => {
+  return new Promise<string>((resolve, reject) => {
+    if (!String(file.type || "").startsWith("image/")) {
+      reject(new Error("รองรับเฉพาะไฟล์รูปภาพ"));
+      return;
+    }
     const reader = new FileReader();
-    reader.readAsDataURL(file);
+    reader.onerror = () => reject(new Error("อ่านไฟล์รูปภาพไม่สำเร็จ"));
     reader.onload = (event) => {
       const img = new Image();
-      img.src = event.target.result;
+      img.onerror = () => reject(new Error("เปิดไฟล์รูปภาพไม่สำเร็จ"));
+      img.src = String(event.target?.result || "");
       img.onload = () => {
         const canvas = document.createElement("canvas");
         const MAX_WIDTH = 800;
@@ -267,12 +420,109 @@ const compressImage = (file) => {
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("ประมวลผลรูปภาพไม่สำเร็จ"));
+          return;
+        }
         ctx.drawImage(img, 0, 0, width, height);
         const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.6);
         resolve(compressedDataUrl);
       };
     };
+    reader.readAsDataURL(file);
   });
+};
+
+const isInspectionRecord = (value: unknown): value is InspectionRecord => {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<InspectionRecord>;
+  return (
+    (typeof item.id === "string" || typeof item.id === "number") &&
+    typeof item.date === "string" &&
+    (typeof item.zoneId === "string" || typeof item.zoneId === "number") &&
+    ["pending", "approved", "rejected"].includes(String(item.status)) &&
+    Array.isArray(item.images)
+  );
+};
+
+const readStoredAuthUser = (): AuthUser | null => {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem("cleaning_auth_user") || "null"
+    ) as Partial<AuthUser> | null;
+    if (!saved || (saved.role !== "admin" && saved.role !== "student")) {
+      return null;
+    }
+    return {
+      role: saved.role,
+      id: typeof saved.id === "string" ? saved.id : undefined,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const parseStudentCredentials = (
+  saved: string | null
+): StudentCredential[] | null => {
+  if (saved === null) return null;
+  try {
+    const parsed = JSON.parse(saved) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(
+      (item): item is StudentCredential =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        typeof (item as StudentCredential).id === "string" &&
+        COUNCIL_ACCOUNT_IDS.includes((item as StudentCredential).id) &&
+        typeof (item as StudentCredential).salt === "string" &&
+        typeof (item as StudentCredential).passwordHash === "string"
+    );
+  } catch {
+    return null;
+  }
+};
+
+const readStoredCredentials = (): StudentCredential[] | null =>
+  parseStudentCredentials(localStorage.getItem(STUDENT_CREDENTIALS_KEY));
+
+const readLegacyPlaintextCredentials = (): Array<{
+  id: string;
+  password: string;
+}> | null => {
+  const saved = localStorage.getItem(LEGACY_PLAINTEXT_CREDENTIALS_KEY);
+  if (saved === null) return null;
+  try {
+    const parsed = JSON.parse(saved) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .filter(
+        (item): item is { id: string; password: string } =>
+          Boolean(item) &&
+          typeof item === "object" &&
+          typeof (item as { id?: unknown }).id === "string" &&
+          typeof (item as { password?: unknown }).password === "string"
+      )
+      .map((item) => ({ id: item.id.trim(), password: item.password }))
+      .filter((item) => COUNCIL_ACCOUNT_IDS.includes(item.id));
+  } catch {
+    return null;
+  }
+};
+
+const readStoredAdminCredential = (): PasswordVerifier | null => {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(ADMIN_CREDENTIAL_KEY) || "null"
+    ) as Partial<PasswordVerifier> | null;
+    return parsed &&
+      typeof parsed.salt === "string" &&
+      typeof parsed.passwordHash === "string"
+      ? { salt: parsed.salt, passwordHash: parsed.passwordHash }
+      : null;
+  } catch {
+    return null;
+  }
 };
 
 const prepareSchoolLogo = (file: File): Promise<string> => {
@@ -309,13 +559,10 @@ const prepareSchoolLogo = (file: File): Promise<string> => {
 };
 
 export default function App() {
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem("cleaning_auth_user");
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user, setUser] = useState<AuthUser | null>(readStoredAuthUser);
 
-  const [activeTab, setActiveTab] = useState("student");
-  const [inspections, setInspections] = useState([]);
+  const [activeTab, setActiveTab] = useState<AppTab>("student");
+  const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
 
   useEffect(() => {
@@ -327,7 +574,7 @@ export default function App() {
     }
   }, [user]);
 
-  const [schoolLogo, setSchoolLogo] = useState(() => {
+  const [schoolLogo, setSchoolLogo] = useState<string>(() => {
     return localStorage.getItem("cleaning_school_logo") || "";
   });
 
@@ -350,27 +597,116 @@ export default function App() {
     }
   };
 
-  const [studentCredentials, setStudentCredentials] = useState(() => {
-    const saved = localStorage.getItem("cleaning_student_creds");
-    return saved ? JSON.parse(saved) : [{ id: "สภา01", password: "1234" }];
-  });
+  const shouldMigrateLegacyCredentials = useRef(
+    localStorage.getItem(STUDENT_CREDENTIALS_KEY) === null &&
+      (localStorage.getItem(LEGACY_PLAINTEXT_CREDENTIALS_KEY) !== null ||
+        localStorage.getItem(PREVIOUS_HASHED_CREDENTIALS_KEY) !== null)
+  );
+  const legacyCredentialMigration = useRef<
+    Promise<StudentCredential[] | null> | null
+  >(null);
+  const [studentCredentials, setStudentCredentials] = useState<
+    StudentCredential[]
+  >(() => readStoredCredentials() ?? getDefaultStudentCredentials());
+  const [adminCredential, setAdminCredential] =
+    useState<PasswordVerifier | null>(readStoredAdminCredential);
 
   useEffect(() => {
+    if (shouldMigrateLegacyCredentials.current) return;
     localStorage.setItem(
-      "cleaning_student_creds",
+      STUDENT_CREDENTIALS_KEY,
       JSON.stringify(studentCredentials)
     );
   }, [studentCredentials]);
+
+  useEffect(() => {
+    if (adminCredential) {
+      localStorage.setItem(
+        ADMIN_CREDENTIAL_KEY,
+        JSON.stringify(adminCredential)
+      );
+    } else {
+      localStorage.removeItem(ADMIN_CREDENTIAL_KEY);
+    }
+  }, [adminCredential]);
+
+  useEffect(() => {
+    const clearLegacyCredentials = () =>
+      LEGACY_CREDENTIAL_KEYS.forEach((key) => localStorage.removeItem(key));
+
+    const migrateLegacyCredentials = async (): Promise<
+      StudentCredential[] | null
+    > => {
+      if (!shouldMigrateLegacyCredentials.current) {
+        clearLegacyCredentials();
+        return null;
+      }
+
+      try {
+        const previousHashedCredentials = parseStudentCredentials(
+          localStorage.getItem(PREVIOUS_HASHED_CREDENTIALS_KEY)
+        );
+        const legacyPlaintextCredentials = readLegacyPlaintextCredentials();
+        let migratedCredentials = previousHashedCredentials;
+
+        if (legacyPlaintextCredentials) {
+          const preserveDeletedAccounts =
+            localStorage.getItem(LEGACY_SEED_KEY) === "done";
+          const credentialMap = new Map<string, StudentCredential>();
+          if (!preserveDeletedAccounts) {
+            getDefaultStudentCredentials().forEach((credential) =>
+              credentialMap.set(credential.id, credential)
+            );
+          }
+          const hashedLegacyCredentials = await Promise.all(
+            legacyPlaintextCredentials.map(async ({ id, password }) => ({
+              id,
+              ...(await createPasswordVerifier(password)),
+            }))
+          );
+          hashedLegacyCredentials.forEach((credential) =>
+            credentialMap.set(credential.id, credential)
+          );
+          migratedCredentials = COUNCIL_ACCOUNT_IDS.flatMap((id) => {
+            const credential = credentialMap.get(id);
+            return credential ? [credential] : [];
+          });
+        }
+
+        const credentialsToStore =
+          migratedCredentials ?? getDefaultStudentCredentials();
+        localStorage.setItem(
+          STUDENT_CREDENTIALS_KEY,
+          JSON.stringify(credentialsToStore)
+        );
+        shouldMigrateLegacyCredentials.current = false;
+        clearLegacyCredentials();
+        return credentialsToStore;
+      } catch (migrationError) {
+        console.error("ย้ายข้อมูลรหัสนักเรียนไม่สำเร็จ:", migrationError);
+        return null;
+      }
+    };
+
+    legacyCredentialMigration.current ??= migrateLegacyCredentials();
+    let active = true;
+    void legacyCredentialMigration.current.then((credentials) => {
+      if (active && credentials) setStudentCredentials(credentials);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const fetchFromSheets = async () => {
     if (!user) return;
     setIsLoadingData(true);
     try {
       const res = await fetch(`${SCRIPT_URL}?refresh=${Date.now()}`);
-      const json = await res.json();
+      const json = (await res.json()) as ApiResponse<unknown[]>;
       if (json.status === "success") {
         const uniqueInspections = deduplicateInspections(
-          Array.isArray(json.data) ? json.data : []
+          Array.isArray(json.data) ? json.data.filter(isInspectionRecord) : []
         );
         setInspections(uniqueInspections.reverse());
       }
@@ -385,7 +721,7 @@ export default function App() {
     fetchFromSheets();
   }, [user]);
 
-  const deleteInspection = async (id) => {
+  const deleteInspection = async (id: InspectionRecord["id"]) => {
     if (
       !window.confirm(
         "คุณแน่ใจหรือไม่ที่จะลบรายการนี้อย่างถาวรออกจากฐานข้อมูล?"
@@ -400,7 +736,9 @@ export default function App() {
       const json = await response.json();
       if (json.status === "success") {
         alert("ลบข้อมูลสำเร็จ!");
-        setInspections(inspections.filter((item) => item.id !== id));
+        setInspections(
+          inspections.filter((item) => String(item.id) !== String(id))
+        );
         return true;
       } else {
         alert("เกิดข้อผิดพลาด: " + json.message);
@@ -414,7 +752,9 @@ export default function App() {
 
   // ใช้จุดอัปเดตเดียวกันทั้งหน้าอนุมัติ ตารางรายงาน และปฏิทิน
   // เมื่อบันทึกสำเร็จทุกหน้าจะเห็นคะแนนล่าสุดจาก Google Sheets ทันที
-  const updateInspectionRecord = async (updatedItem) => {
+  const updateInspectionRecord = async (
+    updatedItem: InspectionRecord
+  ): Promise<boolean> => {
     try {
       const payload = {
         action: "update",
@@ -451,8 +791,10 @@ export default function App() {
     }
   };
 
-  const createInspectionRecord = async (newItem) => {
-    const payload = {
+  const createInspectionRecord = async (
+    newItem: InspectionInput
+  ): Promise<InspectionRecord | false> => {
+    const payload: InspectionRecord & { action: "create" } = {
       action: "create",
       id: newItem.id || Date.now().toString(),
       date: formatDateKey(newItem.date),
@@ -497,6 +839,8 @@ export default function App() {
         onLogin={setUser}
         schoolLogo={schoolLogo}
         studentCredentials={studentCredentials}
+        adminCredential={adminCredential}
+        setAdminCredential={setAdminCredential}
       />
     );
   }
@@ -633,7 +977,7 @@ export default function App() {
             {activeTab === "student" && (
               <StudentForm
                 inspections={inspections}
-                onSave={(data) =>
+                onSave={(data: InspectionRecord) =>
                   setInspections(
                     deduplicateInspections([data, ...inspections])
                   )
@@ -645,7 +989,10 @@ export default function App() {
                 inspections={inspections}
                 deleteInspection={deleteInspection}
                 userRole={user.role}
-                updateStatus={async (id, status) => {
+                updateStatus={async (
+                  id: InspectionRecord["id"],
+                  status: InspectionStatus
+                ) => {
                   const item = inspections.find(
                     (inspection) => String(inspection.id) === String(id)
                   );
@@ -671,6 +1018,8 @@ export default function App() {
               <UserManagement
                 credentials={studentCredentials}
                 setCredentials={setStudentCredentials}
+                adminCredential={adminCredential}
+                setAdminCredential={setAdminCredential}
               />
             )}
           </>
@@ -780,36 +1129,72 @@ export default function App() {
   );
 }
 
-function LoginScreen({ onLogin, schoolLogo, studentCredentials }) {
-  const [loginMode, setLoginMode] = useState("student");
+function LoginScreen({
+  onLogin,
+  schoolLogo,
+  studentCredentials,
+  adminCredential,
+  setAdminCredential,
+}: LoginScreenProps) {
+  const [loginMode, setLoginMode] = useState<LoginMode>("student");
   const [studentId, setStudentId] = useState("");
   const [studentPassword, setStudentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isChecking, setIsChecking] = useState(false);
+  const normalizedStudentId = studentId.trim();
+  const storedStudentCredential = studentCredentials.find(
+    (credential) => credential.id === normalizedStudentId
+  );
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
+    setIsChecking(true);
 
-    if (loginMode === "student") {
-      if (!studentId.trim() || !studentPassword) {
-        setError("กรุณากรอกรหัสประจำตัวและรหัสผ่านให้ครบถ้วน");
-        return;
-      }
-      const validUser = studentCredentials.find(
-        (c) => c.id === studentId.trim() && c.password === studentPassword
-      );
-      if (validUser) {
-        onLogin({ role: "student", id: validUser.id });
+    try {
+      if (loginMode === "student") {
+        if (!normalizedStudentId || !studentPassword) {
+          setError("กรุณากรอกรหัสประจำตัวและรหัสผ่านให้ครบถ้วน");
+          return;
+        }
+        if (!storedStudentCredential) {
+          setError("ไม่พบบัญชีสภานักเรียนนี้ หรือบัญชีถูกปิดใช้งาน");
+          return;
+        }
+        if (await verifyPassword(studentPassword, storedStudentCredential)) {
+          onLogin({ role: "student", id: storedStudentCredential.id });
+        } else {
+          setError("รหัสประจำตัวหรือรหัสผ่านไม่ถูกต้อง");
+        }
       } else {
-        setError("รหัสประจำตัวหรือรหัสผ่านไม่ถูกต้อง");
-      }
-    } else {
-      if (password === "0000") {
+        if (!password) {
+          setError("กรุณากรอกรหัสผ่านแอดมิน");
+          return;
+        }
+        if (adminCredential) {
+          if (await verifyPassword(password, adminCredential)) {
+            onLogin({ role: "admin" });
+          } else {
+            setError("รหัสผ่านแอดมินไม่ถูกต้อง");
+          }
+          return;
+        }
+        if (password.length < 8) {
+          setError("การตั้งค่าครั้งแรกต้องใช้รหัสผ่านอย่างน้อย 8 ตัวอักษร");
+          return;
+        }
+        setAdminCredential(await createPasswordVerifier(password));
         onLogin({ role: "admin" });
-      } else {
-        setError("รหัสผ่านแอดมินไม่ถูกต้อง");
       }
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : "ตรวจสอบรหัสผ่านไม่สำเร็จ"
+      );
+    } finally {
+      setIsChecking(false);
     }
   };
 
@@ -920,33 +1305,45 @@ function LoginScreen({ onLogin, schoolLogo, studentCredentials }) {
                   className="w-full pl-10 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
                 />
               </div>
+              {!adminCredential && (
+                <p className="mt-2 text-xs text-amber-700">
+                  ใช้งานครั้งแรกบนอุปกรณ์นี้: กรุณาตั้งรหัสใหม่อย่างน้อย 8 ตัวอักษร ระบบจะเก็บเฉพาะค่า hash บนเครื่องนี้
+                </p>
+              )}
             </div>
           )}
 
           <button
             type="submit"
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl shadow-lg mt-4"
+            disabled={isChecking}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60 text-white font-bold py-3.5 rounded-xl shadow-lg mt-4"
           >
-            เข้าสู่ระบบ
+            {isChecking ? "กำลังตรวจสอบ..." : "เข้าสู่ระบบ"}
           </button>
+          <p className="text-center text-[11px] leading-relaxed text-slate-400">
+            การล็อกอินนี้เป็นเพียงการกั้นหน้าจอบนอุปกรณ์ จนกว่า API ฝั่งเซิร์ฟเวอร์จะเปิดใช้ระบบยืนยันตัวตน
+          </p>
         </form>
       </div>
     </div>
   );
 }
 
-function StudentForm({ onSave, inspections }) {
-  const [formData, setFormData] = useState({
+function StudentForm({ onSave, inspections }: StudentFormProps) {
+  const [formData, setFormData] = useState<StudentFormState>({
     date: getDefaultWeekday(),
     zoneId: "",
     score: null,
     notes: "",
   });
-  const [images, setImages] = useState([]);
+  const [images, setImages] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState("");
 
-  const hasExistingInspection = (zoneId, date = formData.date) => {
+  const hasExistingInspection = (
+    zoneId: string | number,
+    date = formData.date
+  ) => {
     if (!zoneId || !date) return false;
     return inspections.some(
       (item) =>
@@ -956,8 +1353,10 @@ function StudentForm({ onSave, inspections }) {
   };
   const isReplacingExisting = hasExistingInspection(formData.zoneId);
 
-  const handleImageUpload = async (e) => {
-    const files = Array.from(e.target.files);
+  const handleImageUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = Array.from(e.target.files || []);
     if (images.length + files.length > 3) {
       alert("กรุณาอัปโหลดรูปภาพให้ครบ 3 รูปเท่านั้น");
       return;
@@ -975,11 +1374,11 @@ function StudentForm({ onSave, inspections }) {
     }
   };
 
-  const removeImage = (index) => {
+  const removeImage = (index: number) => {
     setImages(images.filter((_, i) => i !== index));
   };
 
-  const handleDateChange = (e) => {
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedDateStr = e.target.value;
     const day = new Date(selectedDateStr).getDay();
     if (day === 0 || day === 6) {
@@ -989,7 +1388,7 @@ function StudentForm({ onSave, inspections }) {
     setFormData({ ...formData, date: selectedDateStr });
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!formData.zoneId) return alert("กรุณาเลือกเขตพื้นที่");
     if (formData.score === null) return alert("กรุณาให้คะแนน");
@@ -997,7 +1396,7 @@ function StudentForm({ onSave, inspections }) {
 
     setIsSubmitting(true);
     try {
-      const payload = {
+      const payload: InspectionRecord & { action: "create" } = {
         action: "create",
         id: Date.now().toString(),
         date: formData.date,
@@ -1191,7 +1590,7 @@ function StudentForm({ onSave, inspections }) {
           </label>
           <textarea
             className="w-full p-3 border rounded-lg outline-none"
-            rows="2"
+            rows={2}
             placeholder="เช่น อุปกรณ์ชำรุด..."
             value={formData.notes}
             onChange={(e) =>
@@ -1212,11 +1611,15 @@ function StudentForm({ onSave, inspections }) {
   );
 }
 
-function InspectionCalendar({ inspections }) {
+function InspectionCalendar({
+  inspections,
+}: {
+  inspections: InspectionRecord[];
+}) {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
 
-  const toDateKey = (date) => {
+  const toDateKey = (date: Date): string => {
     const yyyy = date.getFullYear();
     const mm = String(date.getMonth() + 1).padStart(2, "0");
     const dd = String(date.getDate()).padStart(2, "0");
@@ -1229,14 +1632,17 @@ function InspectionCalendar({ inspections }) {
   );
   const [selectedDate, setSelectedDate] = useState(todayKey);
 
-  const recordsByDate = inspections.reduce((acc, item) => {
-    const key = formatDateKey(item.date);
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(item);
-    return acc;
-  }, {});
+  const recordsByDate = inspections.reduce<Record<string, InspectionRecord[]>>(
+    (acc, item) => {
+      const key = formatDateKey(item.date);
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(item);
+      return acc;
+    },
+    {}
+  );
 
-  const getDayInfo = (date) => {
+  const getDayInfo = (date: Date): CalendarDayInfo => {
     const key = toDateKey(date);
     const dayOfWeek = date.getDay();
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
@@ -1249,7 +1655,7 @@ function InspectionCalendar({ inspections }) {
     );
     const checkedCount = checkedZoneIds.size;
 
-    let status = "missing";
+    let status: CalendarStatus = "missing";
     if (isWeekend) status = "weekend";
     else if (isFuture) status = "future";
     else if (checkedCount >= ZONES.length) status = "complete";
@@ -1312,7 +1718,7 @@ function InspectionCalendar({ inspections }) {
     year: "numeric",
   }).format(viewMonth);
 
-  const changeMonth = (offset) => {
+  const changeMonth = (offset: number) => {
     setViewMonth(new Date(year, month + offset, 1));
   };
 
@@ -1321,7 +1727,10 @@ function InspectionCalendar({ inspections }) {
     setSelectedDate(todayKey);
   };
 
-  const statusStyles = {
+  const statusStyles: Record<
+    CalendarStatus,
+    { cell: string; badge: string; label: string }
+  > = {
     complete: {
       cell: "bg-emerald-50 border-emerald-300 hover:bg-emerald-100",
       badge: "bg-emerald-600 text-white",
@@ -1654,30 +2063,37 @@ function TeacherApproval({
   updateInspection,
   deleteInspection,
   userRole,
-}) {
+}: TeacherApprovalProps) {
   const pending = inspections.filter((i) => i.status === "pending");
   const history = inspections
     .filter((i) => i.status !== "pending")
     .slice(0, 15);
 
-  const [editingItem, setEditingItem] = useState(null);
-  const [processingId, setProcessingId] = useState(null);
+  const [editingItem, setEditingItem] = useState<InspectionRecord | null>(null);
+  const [processingId, setProcessingId] = useState<
+    InspectionRecord["id"] | null
+  >(null);
 
-  const handleStatusClick = async (id, status) => {
+  const handleStatusClick = async (
+    id: InspectionRecord["id"],
+    status: InspectionStatus
+  ) => {
     setProcessingId(id);
     await updateStatus(id, status);
     setProcessingId(null);
   };
 
-  const handleSaveEdit = async (e) => {
+  const handleSaveEdit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!editingItem) return;
     setProcessingId(editingItem.id);
     const success = await updateInspection(editingItem);
     if (success) setEditingItem(null);
     setProcessingId(null);
   };
 
-  const handleEditDateChange = (e) => {
+  const handleEditDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!editingItem) return;
     const selectedDateStr = e.target.value;
     const day = new Date(selectedDateStr).getDay();
     if (day === 0 || day === 6) {
@@ -1703,7 +2119,7 @@ function TeacherApproval({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {pending.map((item) => {
-              const zone = ZONES.find((z) => z.id === item.zoneId) || {
+              const zone = ZONES.find((z) => z.id === Number(item.zoneId)) || {
                 name: "เขตไม่ระบุ",
                 class: "",
               };
@@ -1767,7 +2183,7 @@ function TeacherApproval({
                           alt="Evidence"
                           className="aspect-square object-cover rounded border"
                           onError={(e) => {
-                            e.target.src =
+                            e.currentTarget.src =
                               "https://placehold.co/400x300?text=No+Image";
                           }}
                         />
@@ -1827,7 +2243,7 @@ function TeacherApproval({
               >
                 <div>
                   <span className="font-bold text-slate-800">
-                    {ZONES.find((z) => z.id === item.zoneId)?.name}
+                    {ZONES.find((z) => z.id === Number(item.zoneId))?.name}
                   </span>
                   <span className="text-slate-500 ml-2">{item.date}</span>
                 </div>
@@ -1888,7 +2304,7 @@ function TeacherApproval({
               <div className="bg-slate-50 p-3 rounded-lg text-sm border border-slate-200">
                 <p className="mb-2">
                   <span className="font-bold text-slate-700">เขตพื้นที่:</span>{" "}
-                  {ZONES.find((z) => z.id === editingItem.zoneId)?.name}
+                  {ZONES.find((z) => z.id === Number(editingItem.zoneId))?.name}
                 </p>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -1913,7 +2329,10 @@ function TeacherApproval({
                 <select
                   value={editingItem.status}
                   onChange={(e) =>
-                    setEditingItem({ ...editingItem, status: e.target.value })
+                    setEditingItem({
+                      ...editingItem,
+                      status: e.target.value as InspectionStatus,
+                    })
                   }
                   className="w-full p-2.5 border rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -1927,7 +2346,7 @@ function TeacherApproval({
                   คะแนน (0-3)
                 </label>
                 <select
-                  value={editingItem.score}
+                  value={editingItem.score ?? ""}
                   onChange={(e) =>
                     setEditingItem({
                       ...editingItem,
@@ -1953,7 +2372,7 @@ function TeacherApproval({
                     setEditingItem({ ...editingItem, notes: e.target.value })
                   }
                   className="w-full p-2.5 border rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500"
-                  rows="2"
+                  rows={2}
                 ></textarea>
               </div>
               <div className="flex gap-3 mt-6">
@@ -1985,8 +2404,8 @@ function ReportView({
   setSchoolLogo,
   updateInspection,
   createInspection,
-}) {
-  const normalizeToMonday = (dateValue) => {
+}: ReportViewProps) {
+  const normalizeToMonday = (dateValue: string | Date): string => {
     const date = new Date(dateValue);
     if (isNaN(date.getTime())) return formatDateKey(new Date());
     date.setHours(12, 0, 0, 0);
@@ -2025,28 +2444,8 @@ function ReportView({
     }
   };
 
-  const [settings, setSettings] = useState(() => {
-    const saved = localStorage.getItem("cleaning_report_settings");
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (!parsed.semesterStart) {
-        parsed.semesterStart = inferredSemesterStart;
-        const inferredDate = new Date(`${inferredSemesterStart}T12:00:00`);
-        parsed.term =
-          inferredDate.getMonth() >= 4 && inferredDate.getMonth() <= 9
-            ? "1"
-            : "2";
-        parsed.year = String(inferredDate.getFullYear() + 543);
-      } else {
-        parsed.semesterStart = normalizeToMonday(parsed.semesterStart);
-      }
-      if (!parsed.term) parsed.term = "1";
-      if (!parsed.year) parsed.year = String(new Date().getFullYear() + 543);
-      if (!parsed.headStudentAffairs)
-        parsed.headStudentAffairs = parsed.teacher || "";
-      return parsed;
-    }
-    return {
+  const [settings, setSettings] = useState<ReportSettings>(() => {
+    const defaults: ReportSettings = {
       president: "",
       teacher: "",
       director: "",
@@ -2055,6 +2454,54 @@ function ReportView({
       year: String(new Date().getFullYear() + 543),
       semesterStart: inferredSemesterStart,
     };
+    const saved = localStorage.getItem("cleaning_report_settings");
+    if (!saved) return defaults;
+
+    try {
+      const parsed = JSON.parse(saved) as unknown;
+      if (!parsed || typeof parsed !== "object") return defaults;
+      const record = parsed as Record<string, unknown>;
+      const hasSemesterStart =
+        typeof record.semesterStart === "string" &&
+        record.semesterStart.trim().length > 0;
+      const semesterStart = hasSemesterStart
+        ? normalizeToMonday(record.semesterStart as string)
+        : inferredSemesterStart;
+      let inferredTerm = "1";
+      let inferredYear = defaults.year;
+      if (!hasSemesterStart) {
+        const inferredDate = new Date(`${inferredSemesterStart}T12:00:00`);
+        inferredTerm =
+          inferredDate.getMonth() >= 4 && inferredDate.getMonth() <= 9
+            ? "1"
+            : "2";
+        inferredYear = String(inferredDate.getFullYear() + 543);
+      }
+      const teacher =
+        typeof record.teacher === "string" ? record.teacher : "";
+      return {
+        president:
+          typeof record.president === "string" ? record.president : "",
+        teacher,
+        director:
+          typeof record.director === "string" ? record.director : "",
+        headStudentAffairs:
+          typeof record.headStudentAffairs === "string"
+            ? record.headStudentAffairs
+            : teacher,
+        term:
+          record.term === "1" || record.term === "2"
+            ? record.term
+            : inferredTerm,
+        year:
+          typeof record.year === "string" && record.year.trim()
+            ? record.year
+            : inferredYear,
+        semesterStart,
+      };
+    } catch {
+      return defaults;
+    }
   });
 
   useEffect(() => {
@@ -2064,28 +2511,18 @@ function ReportView({
   const approvedData = inspections.filter((i) => i.status === "approved");
   const WEEKS = Array.from({ length: 21 }, (_, i) => i + 1);
 
-  const getWeekNumFromDate = (dateStr) => {
+  const getWeekNumFromDate = (dateStr: string | Date): number => {
     if (!dateStr || !settings.semesterStart) return 0;
-    const semesterStartMonday = new Date(`${settings.semesterStart}T12:00:00`);
-
-    const currentRecordDate = new Date(dateStr);
-    currentRecordDate.setHours(12, 0, 0, 0);
-
-    const timeDiff =
-      currentRecordDate.getTime() - semesterStartMonday.getTime();
-    const daysDiff = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-
-    const weekNo = Math.floor(daysDiff / 7) + 1;
-    return weekNo;
+    return getAcademicWeekNumber(dateStr, settings.semesterStart);
   };
 
-  const getWeekDatesForWeek = (weekNo) => {
+  const getWeekDatesForWeek = (weekNo: number): string[] => {
     const baseMonday = new Date(`${settings.semesterStart}T12:00:00`);
     baseMonday.setHours(12, 0, 0, 0);
 
     baseMonday.setDate(baseMonday.getDate() + (weekNo - 1) * 7);
 
-    const days = [];
+    const days: string[] = [];
     for (let i = 0; i < 5; i++) {
       const d = new Date(baseMonday);
       d.setDate(baseMonday.getDate() + i);
@@ -2107,7 +2544,7 @@ function ReportView({
 
   const currentWeekDates = getWeekDatesForWeek(selectedReportWeek);
 
-  const getSemesterScore = (weekNo, zoneId) => {
+  const getSemesterScore = (weekNo: number, zoneId: number): number => {
     return approvedData
       .filter(
         (i) =>
@@ -2117,13 +2554,19 @@ function ReportView({
       .reduce((sum, item) => sum + (Number(item.score) || 0), 0);
   };
 
-  const getZoneTotalSemester = (zoneId) => {
+  const getZoneTotalSemester = (zoneId: number): number => {
     return approvedData
-      .filter((i) => Number(i.zoneId) === Number(zoneId))
+      .filter((i) => {
+        const weekNo = getWeekNumFromDate(i.date);
+        return (
+          Number(i.zoneId) === Number(zoneId) &&
+          isAcademicWeekInTerm(weekNo, WEEKS.length)
+        );
+      })
       .reduce((sum, item) => sum + (Number(item.score) || 0), 0);
   };
 
-  const calculateGrade = (percent) => {
+  const calculateGrade = (percent: number): string => {
     if (percent >= 80) return "ดีเยี่ยม";
     if (percent >= 70) return "ดี";
     if (percent >= 50) return "พอใช้";
@@ -2136,19 +2579,19 @@ function ReportView({
   );
   const weeklyReportData = weeklyFilteredData
     .slice()
-    .sort((left: any, right: any) => {
+    .sort((left, right) => {
       const dateCompare = formatDateKey(left.date).localeCompare(
         formatDateKey(right.date)
       );
       return dateCompare || Number(left.zoneId) - Number(right.zoneId);
     });
 
-  const reportFileName = (extension) =>
+  const reportFileName = (extension: string): string =>
     `รายงานตรวจเวร_${
       reportMode === "weekly" ? `สัปดาห์_${selectedReportWeek}` : "ภาคเรียน"
     }.${extension}`;
 
-  const downloadBlob = (blob, filename) => {
+  const downloadBlob = (blob: Blob, filename: string): void => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -2162,8 +2605,9 @@ function ReportView({
   const exportToExcel = async () => {
     setExporting("excel");
     try {
+      const XLSX = await import("xlsx-js-style");
       const workbook = XLSX.utils.book_new();
-      let summaryRows = [];
+      let summaryRows: Array<Array<string | number>> = [];
 
       if (reportMode === "weekly") {
         summaryRows = [
@@ -2194,7 +2638,7 @@ function ReportView({
               );
               return record ? Number(record.score) : "";
             });
-            const total = dayScores.reduce(
+            const total = dayScores.reduce<number>(
               (sum, score) => sum + (score === "" ? 0 : Number(score)),
               0
             );
@@ -2271,11 +2715,16 @@ function ReportView({
         right: { style: "thin", color: { rgb: "475569" } },
       };
       const styleSheet = (
-        sheet,
-        rows,
-        { titleRows = [], headerRows = [], tableStartRow = 0, totalRows = [] } = {}
+        sheet: SpreadsheetWorksheet,
+        rows: SpreadsheetRow[],
+        {
+          titleRows = [],
+          headerRows = [],
+          tableStartRow = 0,
+          totalRows = [],
+        }: SpreadsheetStyleOptions = {}
       ) => {
-        const range = XLSX.utils.decode_range(sheet["!ref"]);
+        const range = XLSX.utils.decode_range(sheet["!ref"] || "A1");
         for (let row = range.s.r; row <= range.e.r; row += 1) {
           for (let column = range.s.c; column <= range.e.c; column += 1) {
             const address = XLSX.utils.encode_cell({ r: row, c: column });
@@ -2320,7 +2769,7 @@ function ReportView({
       });
       XLSX.utils.book_append_sheet(workbook, summarySheet, "สรุปผล");
 
-      const detailRows = [
+      const detailRows: SpreadsheetRow[] = [
         [
           "วันที่",
           "เขตพื้นที่",
@@ -2394,8 +2843,12 @@ function ReportView({
   };
 
   const createWordCell = (
-    value,
-    { bold = false, fill = "FFFFFF", align = AlignmentType.CENTER } = {}
+    value: string | number,
+    {
+      bold = false,
+      fill = "FFFFFF",
+      align = AlignmentType.CENTER,
+    }: { bold?: boolean; fill?: string; align?: WordAlignment } = {}
   ) =>
     new TableCell({
       verticalAlign: VerticalAlign.CENTER,
@@ -2499,7 +2952,7 @@ function ReportView({
         reportMode === "weekly"
           ? ["เขตพื้นที่ / ชั้น", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "รวม"]
           : ["สัปดาห์ที่", ...ZONES.map((zone) => zone.name)];
-      const dataRows =
+      const dataRows: Array<Array<string | number>> =
         reportMode === "weekly"
           ? ZONES.map((zone) => {
               const scores = currentWeekDates.map((date) => {
@@ -2510,7 +2963,7 @@ function ReportView({
                 );
                 return record ? Number(record.score) : "-";
               });
-              const total = scores.reduce(
+              const total = scores.reduce<number>(
                 (sum, score) => sum + (score === "-" ? 0 : Number(score)),
                 0
               );
@@ -2736,74 +3189,79 @@ function ReportView({
     if (!element) return;
     setIsPrinting(true);
     setExporting("pdf");
-
+    let holder: HTMLDivElement | null = null;
     try {
-      await document.fonts?.load('16pt "TH Sarabun PSK"');
-      await document.fonts?.ready;
-    } catch (fontError) {
-      console.warn("Unable to preload TH Sarabun PSK", fontError);
-    }
+      const { default: html2pdf } = await import("html2pdf.js");
+      try {
+        await document.fonts?.load('16pt "TH Sarabun PSK"');
+        await document.fonts?.ready;
+      } catch (fontError) {
+        console.warn("Unable to preload TH Sarabun PSK", fontError);
+      }
 
-    const exportNode = element.cloneNode(true) as HTMLElement;
-    exportNode.classList.add("pdf-export-node");
-    exportNode.querySelectorAll(".screen-only").forEach((node) => node.remove());
-    exportNode.querySelectorAll(".print-only").forEach((node) => {
-      node.classList.remove("hidden", "print:block", "print:inline");
-    });
-    const holder = document.createElement("div");
-    holder.style.position = "fixed";
-    holder.style.left = "0";
-    holder.style.top = "0";
-    holder.style.zIndex = "-1000";
-    holder.style.pointerEvents = "none";
-    holder.style.background = "white";
-    holder.style.width = reportMode === "semester" ? "1122px" : "794px";
-    holder.appendChild(exportNode);
-    document.body.appendChild(holder);
+      const exportNode = element.cloneNode(true) as HTMLElement;
+      exportNode.classList.add("pdf-export-node");
+      exportNode
+        .querySelectorAll(".screen-only")
+        .forEach((node) => node.remove());
+      exportNode.querySelectorAll(".print-only").forEach((node) => {
+        node.classList.remove("hidden", "print:block", "print:inline");
+      });
+      holder = document.createElement("div");
+      holder.style.position = "fixed";
+      holder.style.left = "0";
+      holder.style.top = "0";
+      holder.style.zIndex = "-1000";
+      holder.style.pointerEvents = "none";
+      holder.style.background = "white";
+      holder.style.width = reportMode === "semester" ? "1122px" : "794px";
+      holder.appendChild(exportNode);
+      document.body.appendChild(holder);
 
-    const opt = {
-      margin: [8, 8, 8, 8],
-      filename: reportFileName("pdf"),
-      image: { type: "jpeg", quality: 0.98 },
-      pagebreak: {
-        mode: ["css", "legacy"],
-        before: [".page-break-before"],
-        avoid: ["tr", ".avoid-break", ".photo-record"],
-      },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: "#ffffff",
-        scrollX: 0,
-        scrollY: 0,
-        windowWidth: reportMode === "semester" ? 1122 : 794,
-      },
-      jsPDF: {
-        unit: "mm",
-        format: "a4",
-        orientation: reportMode === "semester" ? "landscape" : "portrait",
-        compress: true,
-      },
-    };
+      const opt = {
+        margin: [8, 8, 8, 8] as [number, number, number, number],
+        filename: reportFileName("pdf"),
+        image: { type: "jpeg" as const, quality: 0.98 },
+        pagebreak: {
+          mode: ["css", "legacy"],
+          before: [".page-break-before"],
+          avoid: ["tr", ".avoid-break", ".photo-record"],
+        },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: reportMode === "semester" ? 1122 : 794,
+        },
+        jsPDF: {
+          unit: "mm",
+          format: "a4",
+          orientation: (reportMode === "semester"
+            ? "landscape"
+            : "portrait") as "landscape" | "portrait",
+          compress: true,
+        },
+      };
 
-    try {
       await html2pdf().set(opt).from(exportNode).save();
     } catch (error) {
       console.error(error);
       alert("สร้างไฟล์ PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     } finally {
-      document.body.removeChild(holder);
+      holder?.remove();
       setIsPrinting(false);
       setExporting("");
     }
   };
 
   const handleInlineScoreChange = async (
-    record,
-    zoneId,
-    date,
-    nextScore
+    record: InspectionRecord | undefined,
+    zoneId: number,
+    date: string,
+    nextScore: string
   ) => {
     if (nextScore === "") return;
     if (
@@ -3413,7 +3871,7 @@ function ReportView({
                         ไม่มีข้อมูลรูปภาพในสัปดาห์นี้
                       </p>
                     ) : null}
-                    {weeklyReportData.map((item: any) => {
+                    {weeklyReportData.map((item) => {
                       const zone = ZONES.find(
                         (z) => z.id === Number(item.zoneId)
                       );
@@ -3446,7 +3904,7 @@ function ReportView({
                                     alt="Evidence"
                                     className="w-full h-[140px] object-cover rounded-md border border-slate-300"
                                     onError={(e) => {
-                                      e.target.src =
+                                      e.currentTarget.src =
                                         "https://placehold.co/400x300?text=No+Image";
                                     }}
                                   />
@@ -3647,36 +4105,202 @@ function ReportView({
   );
 }
 
-function UserManagement({ credentials, setCredentials }) {
+function UserManagement({
+  credentials,
+  setCredentials,
+  adminCredential,
+  setAdminCredential,
+}: UserManagementProps) {
   const [newId, setNewId] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [message, setMessage] = useState("");
+  const [studentMessage, setStudentMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [currentAdminPassword, setCurrentAdminPassword] = useState("");
+  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState("");
+  const [adminMessage, setAdminMessage] = useState("");
+  const [isSavingAdmin, setIsSavingAdmin] = useState(false);
 
-  const handleAddUser = (e) => {
+  const handleChangeAdminPassword = async (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+    setAdminMessage("");
+    if (adminCredential && !currentAdminPassword) {
+      setAdminMessage("กรุณากรอกรหัสผ่านแอดมินปัจจุบัน");
+      return;
+    }
+    if (newAdminPassword.length < 8) {
+      setAdminMessage("รหัสผ่านแอดมินใหม่ต้องมีอย่างน้อย 8 ตัวอักษร");
+      return;
+    }
+    if (newAdminPassword !== confirmAdminPassword) {
+      setAdminMessage("ยืนยันรหัสผ่านแอดมินใหม่ไม่ตรงกัน");
+      return;
+    }
+
+    setIsSavingAdmin(true);
+    try {
+      if (
+        adminCredential &&
+        !(await verifyPassword(currentAdminPassword, adminCredential))
+      ) {
+        setAdminMessage("รหัสผ่านแอดมินปัจจุบันไม่ถูกต้อง");
+        return;
+      }
+      setAdminCredential(await createPasswordVerifier(newAdminPassword));
+      setCurrentAdminPassword("");
+      setNewAdminPassword("");
+      setConfirmAdminPassword("");
+      setAdminMessage(
+        adminCredential
+          ? "เปลี่ยนรหัสผ่านแอดมินสำเร็จ"
+          : "ตั้งรหัสผ่านแอดมินสำเร็จ"
+      );
+    } catch (saveError) {
+      setAdminMessage(
+        saveError instanceof Error
+          ? saveError.message
+          : "ตั้งค่ารหัสผ่านแอดมินไม่สำเร็จ"
+      );
+    } finally {
+      setIsSavingAdmin(false);
+    }
+  };
+
+  const handleAddUser = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!newId.trim() || !newPassword.trim())
+    const normalizedId = newId.trim();
+    if (!normalizedId || !newPassword)
       return alert("กรุณากรอกข้อมูลให้ครบ");
-    if (credentials.find((c) => c.id === newId.trim()))
-      return alert("มีบัญชีนี้แล้ว");
-    setCredentials([
-      ...credentials,
-      { id: newId.trim(), password: newPassword.trim() },
-    ]);
-    setNewId("");
-    setNewPassword("");
-    setMessage("เพิ่มสำเร็จ");
-    setTimeout(() => setMessage(""), 2000);
+    if (!COUNCIL_ACCOUNT_IDS.includes(normalizedId))
+      return alert("บัญชีต้องอยู่ระหว่าง สภา01 ถึง สภา09");
+    if (newPassword.length < 4)
+      return alert("รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร");
+    const isReplacing = credentials.some((item) => item.id === normalizedId);
+    setIsSaving(true);
+    try {
+      const verifier = await createPasswordVerifier(newPassword);
+      setCredentials((current) => {
+        const next = [
+          ...current.filter((item) => item.id !== normalizedId),
+          { id: normalizedId, ...verifier },
+        ];
+        return next.sort(
+          (first, second) =>
+            COUNCIL_ACCOUNT_IDS.indexOf(first.id) -
+            COUNCIL_ACCOUNT_IDS.indexOf(second.id)
+        );
+      });
+      setNewId("");
+      setNewPassword("");
+      setStudentMessage(
+        isReplacing
+          ? "เปลี่ยนรหัสบัญชีและเก็บเฉพาะค่า hash สำเร็จ"
+          : "เพิ่มบัญชีและเก็บเฉพาะค่า hash สำเร็จ"
+      );
+      setTimeout(() => setStudentMessage(""), 2500);
+    } catch (saveError) {
+      alert(
+        saveError instanceof Error
+          ? saveError.message
+          : "ตั้งค่ารหัสผ่านไม่สำเร็จ"
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-xl shadow-sm border p-6 print:hidden">
+        <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
+          <Key className="text-emerald-600" /> รหัสผ่านแอดมิน
+        </h2>
+        <p className="mb-4 text-sm text-slate-500">
+          {adminCredential
+            ? "กรอกรหัสปัจจุบันก่อนตั้งรหัสใหม่ การเปลี่ยนแปลงจะมีผลกับการเข้าสู่ระบบครั้งถัดไปบนอุปกรณ์นี้"
+            : "ตั้งรหัสผ่านแอดมินอย่างน้อย 8 ตัวอักษรสำหรับอุปกรณ์นี้"}
+        </p>
+        {adminMessage && (
+          <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">
+            {adminMessage}
+          </p>
+        )}
+        <form
+          onSubmit={handleChangeAdminPassword}
+          className="grid gap-4 rounded-xl bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-4"
+        >
+          {adminCredential && (
+            <div>
+              <label className="block text-xs font-bold mb-1">
+                รหัสผ่านปัจจุบัน
+              </label>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={currentAdminPassword}
+                onChange={(event) =>
+                  setCurrentAdminPassword(event.target.value)
+                }
+                className="w-full p-2 border rounded"
+              />
+            </div>
+          )}
+          <div>
+            <label className="block text-xs font-bold mb-1">
+              รหัสผ่านใหม่
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={newAdminPassword}
+              onChange={(event) => setNewAdminPassword(event.target.value)}
+              className="w-full p-2 border rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold mb-1">
+              ยืนยันรหัสผ่านใหม่
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={confirmAdminPassword}
+              onChange={(event) =>
+                setConfirmAdminPassword(event.target.value)
+              }
+              className="w-full p-2 border rounded"
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              type="submit"
+              disabled={isSavingAdmin}
+              className="w-full rounded bg-emerald-600 p-2 px-6 font-bold text-white disabled:cursor-wait disabled:opacity-60"
+            >
+              {isSavingAdmin
+                ? "กำลังบันทึก..."
+                : adminCredential
+                  ? "เปลี่ยนรหัสแอดมิน"
+                  : "ตั้งรหัสแอดมิน"}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border p-6 print:hidden">
         <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
           <UserPlus className="text-emerald-600" /> จัดการรหัสผ่านสภานักเรียน
         </h2>
+        {studentMessage && (
+          <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">
+            {studentMessage}
+          </p>
+        )}
         <form
           onSubmit={handleAddUser}
-          className="flex gap-4 bg-slate-50 p-4 rounded-xl mb-4 items-end"
+          className="grid gap-4 bg-slate-50 p-4 rounded-xl mb-4 items-end md:grid-cols-[1fr_1fr_auto]"
         >
           <div className="flex-1">
             <label className="block text-xs font-bold mb-1">Username</label>
@@ -3691,7 +4315,7 @@ function UserManagement({ credentials, setCredentials }) {
           <div className="flex-1">
             <label className="block text-xs font-bold mb-1">Password</label>
             <input
-              type="text"
+              type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               className="w-full p-2 border rounded"
@@ -3700,17 +4324,19 @@ function UserManagement({ credentials, setCredentials }) {
           </div>
           <button
             type="submit"
-            className="bg-emerald-600 text-white p-2 px-6 rounded font-bold"
+            disabled={isSaving}
+            className="bg-emerald-600 text-white p-2 px-6 rounded font-bold disabled:cursor-wait disabled:opacity-60"
           >
-            เพิ่มบัญชี
+            {isSaving ? "กำลังบันทึก..." : "เพิ่ม / เปลี่ยนรหัส"}
           </button>
         </form>
-        <table className="w-full text-left bg-white border">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-left bg-white border">
           <thead>
             <tr className="bg-slate-100">
               <th className="p-3">ลำดับ</th>
               <th className="p-3">Username</th>
-              <th className="p-3">Password</th>
+              <th className="p-3">สถานะรหัส</th>
               <th className="p-3 text-center">ลบ</th>
             </tr>
           </thead>
@@ -3721,14 +4347,17 @@ function UserManagement({ credentials, setCredentials }) {
                 <td className="p-3 font-bold">{c.id}</td>
                 <td className="p-3">
                   <span className="bg-slate-100 px-2 py-1 rounded">
-                    {c.password}
+                    ตั้งค่าแล้ว (PBKDF2)
                   </span>
                 </td>
                 <td className="p-3 text-center">
                   <button
                     onClick={() =>
-                      setCredentials(credentials.filter((u) => u.id !== c.id))
+                      setCredentials((current) =>
+                        current.filter((user) => user.id !== c.id)
+                      )
                     }
+                    aria-label={`ลบบัญชี ${c.id}`}
                     className="text-red-500"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -3737,7 +4366,8 @@ function UserManagement({ credentials, setCredentials }) {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

@@ -3,7 +3,7 @@
 ระบบบันทึก อนุมัติ ติดตาม และออกรายงานการตรวจเวรทำความสะอาดของโรงเรียนไตรธารวิทยา
 
 - เว็บไซต์: <https://po45-ops.github.io/cleaning-system/>
-- Frontend: React + TypeScript บน GitHub Pages
+- Frontend: React + TypeScript + Vite บน GitHub Pages
 - ฐานข้อมูล: Google Sheets ผ่าน Google Apps Script
 - พื้นที่ตรวจ: 9 เขต (ป.1–ป.6 และ ม.1–ม.3)
 
@@ -17,6 +17,7 @@
 - ส่งสรุปสิ้นวัน พร้อมป้องกันข้อความซ้ำ
 - รับคำสั่ง `PDF วันนี้`, `PDF สัปดาห์นี้`, `PDF สัปดาห์หน้า` และ `PDF เดือนนี้`
 - รายงานรายวัน/รายสัปดาห์มีตารางสรุป ผู้รับผิดชอบ และภาพหลักฐานแบบ 3 รูปต่อรายการ
+- รายงาน PDF ทางการใช้เฉพาะข้อมูลสถานะ `approved`
 - เก็บ Page Token และ PSID ใน Google Apps Script Properties ไม่เปิดเผยในโค้ด
 
 อ่านขั้นตอนสร้าง Facebook Page, Meta App, Webhook และ Trigger ที่ [คู่มือตั้งค่า Messenger ภาษาไทย](docs/facebook-messenger-setup-th.md)
@@ -26,12 +27,33 @@
 ## คำสั่งพัฒนา
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
-สร้างไฟล์ production:
+ตรวจสอบและสร้างไฟล์ production:
 
 ```bash
+npm test
+npm run typecheck
+npm audit --omit=dev --audit-level=high
 npm run build
 ```
+
+GitHub Actions จะรันขั้นตอนเหล่านี้กับ Pull Request ทุกครั้ง และ Deploy GitHub Pages เฉพาะเมื่อ merge/push เข้า `main` เท่านั้น
+
+## การ Deploy Google Apps Script
+
+Workflow ของ GitHub Pages Deploy เฉพาะหน้าเว็บ ไม่ได้ Deploy Apps Script อัตโนมัติ หลังแก้ไฟล์ [`apps-script/MessengerNotifications.gs`](apps-script/MessengerNotifications.gs) ต้องคัดลอกไปยังโครงการ Apps Script เดิมและสร้าง Deployment version ใหม่โดยคง URL `/exec` เดิม
+
+## ความปลอดภัย
+
+หน้าเว็บเดิมยังใช้การตรวจสิทธิ์ฝั่ง browser และ API หลัก (`doGet`/`doPost`) ไม่ได้เก็บ source ไว้ใน repository นี้ จึงยังไม่ควรถือว่าปุ่ม login เป็นขอบเขตความปลอดภัยของข้อมูล ฝั่ง API ต้องตรวจ authentication/authorization ทุกคำสั่งก่อนใช้กับข้อมูลจริง ดูรายการที่ต้องทำใน [SECURITY.md](SECURITY.md)
+
+บัญชี `สภา01`–`สภา09` ยังคงใช้รหัสเดิมที่ผู้ดูแลกำหนดไว้ แต่ใน source เก็บเฉพาะ salted PBKDF2 hash ไม่เก็บรหัสแบบ plaintext ระบบจะย้ายรหัสที่เคยแก้ไว้ใน browser เดิมเป็นค่า hash โดยอัตโนมัติ ผู้ดูแลสามารถเพิ่ม ปิดบัญชี หรือเปลี่ยนรหัสนักเรียนได้จากหน้า **รหัสผ่าน**
+
+ระบบไม่ฝังรหัสแอดมินเริ่มต้นไว้ใน public source เมื่อเข้าโหมดแอดมินครั้งแรกบนอุปกรณ์ ให้ตั้งรหัสอย่างน้อย 8 ตัวอักษร หลังจากนั้นเปลี่ยนได้ทุกเวลาจากหน้า **รหัสผ่าน** โดยต้องยืนยันรหัสปัจจุบัน ค่า hash ของแอดมินถูกเก็บบนอุปกรณ์นั้นเท่านั้น
+
+การตั้งค่านี้เป็นเพียง screen lock ชั่วคราว ไม่ใช่สิทธิ์ฝั่ง API เนื่องจาก GitHub Pages เป็นเว็บไซต์สาธารณะและ source รวมถึงค่า hash ดาวน์โหลดได้ ผู้ที่ดูแล Apps Script ต้องเพิ่มระบบยืนยันตัวตนฝั่งเซิร์ฟเวอร์ก่อนใช้กับข้อมูลที่เป็นความลับหรือการอนุมัติที่มีผลจริง
+
+รายชื่อนักเรียนถูกนำออกจาก public bundle เช่นกัน ผู้ดูแลต้องกรอกรายชื่อสมาชิกอีกครั้งในหน้าตารางจัดเวร แล้วกดบันทึก/เผยแพร่ตารางหลัง Deploy
