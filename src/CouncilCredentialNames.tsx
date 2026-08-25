@@ -2,20 +2,12 @@ import { useEffect } from "react";
 
 type CouncilAccountOwner = {
   accountId: string;
-  members: string[];
 };
 
-const COUNCIL_ACCOUNT_OWNERS: CouncilAccountOwner[] = [
-  { accountId: "สภา01", members: ["จิราพร", "ธนวัฒน์"] },
-  { accountId: "สภา02", members: ["ศิริพงษ์", "ภาณุวัฒน์"] },
-  { accountId: "สภา03", members: ["พงศพัศ", "มงคลเทพ"] },
-  { accountId: "สภา04", members: ["วรัชญา", "มหายศนันท์"] },
-  { accountId: "สภา05", members: ["อรพิมพ์", "อโณทัย"] },
-  { accountId: "สภา06", members: ["เอเชีย", "ภูผา"] },
-  { accountId: "สภา07", members: ["ศุภกร", "ชนวีร์", "จารุวัฒน์"] },
-  { accountId: "สภา08", members: ["วีรัช", "วุฒิชัย"] },
-  { accountId: "สภา09", members: ["นพวิทย์", "อนุวัฒน์"] },
-];
+const COUNCIL_ACCOUNT_OWNERS: CouncilAccountOwner[] = Array.from(
+  { length: 9 },
+  (_, index) => ({ accountId: `สภา${String(index + 1).padStart(2, "0")}` })
+);
 
 const OWNER_BY_ACCOUNT = new Map(
   COUNCIL_ACCOUNT_OWNERS.map((owner, index) => [
@@ -61,7 +53,7 @@ const patchCredentialTable = (): void => {
     }
 
     const nextText = owner
-      ? `กลุ่มที่ ${owner.groupNumber}: ${owner.members.join(" • ")}`
+      ? `กลุ่มที่ ${owner.groupNumber}: ${owner.accountId}`
       : "ยังไม่ได้ระบุรายชื่อนักเรียนผู้รับผิดชอบ";
 
     if (ownerCell.textContent !== nextText) {
@@ -168,7 +160,7 @@ const patchOwnDutyHeading = (groupNumber?: number): void => {
         )
           .trim()
           .toLowerCase()
-      )?.members.join(" • ") || "ยังไม่มีรายชื่อสมาชิก";
+      )?.accountId || "ยังไม่มีรายชื่อสมาชิก";
 
   const nextText = `กลุ่มที่ ${groupNumber}: ${membersText}`;
   if (heading.textContent !== nextText) {

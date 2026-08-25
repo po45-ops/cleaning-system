@@ -1,39 +1,39 @@
 {
-  "name": "react-typescript",
+  "name": "cleaning-system",
   "version": "1.0.0",
+  "type": "module",
   "homepage": "https://po45-ops.github.io/cleaning-system",
-  "description": "React and TypeScript example starter project",
+  "description": "ระบบตรวจเวรทำความสะอาด โรงเรียนไตรธารวิทยา",
   "keywords": [
-    "typescript",
     "react",
-    "starter"
+    "typescript",
+    "school",
+    "cleaning-inspection"
   ],
-  "main": "src/index.tsx",
   "dependencies": {
     "docx": "8.5.0",
-    "html2pdf.js": "^0.10.3",
-    "loader-utils": "3.2.1",
+    "html2pdf.js": "0.14.0",
     "lucide-react": "1.17.0",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "react-scripts": "5.0.1",
     "xlsx-js-style": "1.2.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
     "@types/react": "18.2.38",
     "@types/react-dom": "18.2.15",
-    "typescript": "4.4.4"
+    "@vitejs/plugin-react": "6.1.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test --env=jsdom",
-    "eject": "react-scripts eject"
-  },
-  "browserslist": [
-    ">0.2%",
-    "not dead",
-    "not ie <= 11",
-    "not op_mini all"
-  ]
+    "start": "vite",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "check:apps-script": "node scripts/validate-apps-script.mjs",
+    "test": "vitest run && npm run check:apps-script"
+  }
 }
