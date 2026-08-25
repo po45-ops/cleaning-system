@@ -19,7 +19,7 @@ Before using the system for confidential or high-impact data, the owner of that 
 5. Return only the fields needed by the caller. Do not expose student names, credential data, or unrestricted Drive image URLs from a public `doGet` response.
 6. Add rate limits and an audit log for authentication failures and every privileged write.
 
-The legacy plaintext credential storage has been removed. To preserve the owner's existing student access, the frontend ships salted PBKDF2 verifiers for the nine council accounts; it does not ship the plaintext value. A short shared student code can still be guessed offline from a public verifier, so this remains only a temporary screen lock. Admins choose an initial password of at least eight characters per device and can change it after confirming the current value. Once server sessions are deployed, remove these client-side verifiers and the `cleaning_auth_user` role cache.
+The legacy plaintext credential storage has been removed. To preserve the owner's existing student access, the frontend ships salted PBKDF2 verifiers for the nine council accounts; it does not ship the plaintext value. A short shared student code can still be guessed offline from a public verifier, so this remains only a temporary screen lock. Admins choose an initial password of at least six characters per device and can change it after confirming the current value. Once server sessions are deployed, remove these client-side verifiers and the `cleaning_auth_user` role cache.
 
 ## Protections already present in this repository
 

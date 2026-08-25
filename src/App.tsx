@@ -178,6 +178,7 @@ const SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbyTSx3ggaJfXtYd_rQ67FoI5pPb8y_LXcTAm6RiSnkf34uiZL5GZBStGVMXyGCHQ5JfEA/exec";
 const STUDENT_CREDENTIALS_KEY = "cleaning_student_credentials_v3";
 const ADMIN_CREDENTIAL_KEY = "cleaning_admin_credential_v2";
+const MIN_ADMIN_PASSWORD_LENGTH = 6;
 const LEGACY_PLAINTEXT_CREDENTIALS_KEY = "cleaning_student_creds";
 const LEGACY_SEED_KEY = "cleaning_student_creds_seed_9_groups_v1";
 const PREVIOUS_HASHED_CREDENTIALS_KEY = "cleaning_student_credentials_v2";
@@ -1180,8 +1181,10 @@ function LoginScreen({
           }
           return;
         }
-        if (password.length < 8) {
-          setError("การตั้งค่าครั้งแรกต้องใช้รหัสผ่านอย่างน้อย 8 ตัวอักษร");
+        if (password.length < MIN_ADMIN_PASSWORD_LENGTH) {
+          setError(
+            `การตั้งค่าครั้งแรกต้องใช้รหัสผ่านอย่างน้อย ${MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษร`
+          );
           return;
         }
         setAdminCredential(await createPasswordVerifier(password));
@@ -1301,13 +1304,14 @@ function LoginScreen({
                   type="password"
                   placeholder="กรอกรหัสผ่าน"
                   value={password}
+                  minLength={MIN_ADMIN_PASSWORD_LENGTH}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-10 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50"
                 />
               </div>
               {!adminCredential && (
                 <p className="mt-2 text-xs text-amber-700">
-                  ใช้งานครั้งแรกบนอุปกรณ์นี้: กรุณาตั้งรหัสใหม่อย่างน้อย 8 ตัวอักษร ระบบจะเก็บเฉพาะค่า hash บนเครื่องนี้
+                  ใช้งานครั้งแรกบนอุปกรณ์นี้: กรุณาตั้งรหัสใหม่อย่างน้อย {MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษร ระบบจะเก็บเฉพาะค่า hash บนเครื่องนี้
                 </p>
               )}
             </div>
@@ -4130,8 +4134,10 @@ function UserManagement({
       setAdminMessage("กรุณากรอกรหัสผ่านแอดมินปัจจุบัน");
       return;
     }
-    if (newAdminPassword.length < 8) {
-      setAdminMessage("รหัสผ่านแอดมินใหม่ต้องมีอย่างน้อย 8 ตัวอักษร");
+    if (newAdminPassword.length < MIN_ADMIN_PASSWORD_LENGTH) {
+      setAdminMessage(
+        `รหัสผ่านแอดมินใหม่ต้องมีอย่างน้อย ${MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษร`
+      );
       return;
     }
     if (newAdminPassword !== confirmAdminPassword) {
@@ -4213,27 +4219,34 @@ function UserManagement({
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-sm border p-6 print:hidden">
-        <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
-          <Key className="text-emerald-600" /> รหัสผ่านแอดมิน
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] print:hidden md:p-7">
+        <h2 className="mb-2 flex items-center gap-3 text-xl font-bold text-slate-800">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-50">
+            <Key className="h-5 w-5 text-emerald-600" />
+          </span>
+          รหัสผ่านแอดมิน
         </h2>
-        <p className="mb-4 text-sm text-slate-500">
+        <p className="mb-5 pl-0 text-sm leading-relaxed text-slate-500 md:pl-[52px]">
           {adminCredential
             ? "กรอกรหัสปัจจุบันก่อนตั้งรหัสใหม่ การเปลี่ยนแปลงจะมีผลกับการเข้าสู่ระบบครั้งถัดไปบนอุปกรณ์นี้"
-            : "ตั้งรหัสผ่านแอดมินอย่างน้อย 8 ตัวอักษรสำหรับอุปกรณ์นี้"}
+            : `ตั้งรหัสผ่านแอดมินอย่างน้อย ${MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษรสำหรับอุปกรณ์นี้`}
         </p>
         {adminMessage && (
-          <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800">
+          <p className="mb-5 rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-sm font-bold text-amber-800">
             {adminMessage}
           </p>
         )}
         <form
           onSubmit={handleChangeAdminPassword}
-          className="grid gap-4 rounded-xl bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-4"
+          className={`grid gap-4 rounded-2xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100 md:p-5 ${
+            adminCredential
+              ? "md:grid-cols-2 xl:grid-cols-4"
+              : "md:grid-cols-3"
+          }`}
         >
           {adminCredential && (
             <div>
-              <label className="block text-xs font-bold mb-1">
+              <label className="mb-1.5 block text-xs font-bold text-slate-600">
                 รหัสผ่านปัจจุบัน
               </label>
               <input
@@ -4243,41 +4256,43 @@ function UserManagement({
                 onChange={(event) =>
                   setCurrentAdminPassword(event.target.value)
                 }
-                className="w-full p-2 border rounded"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
               />
             </div>
           )}
           <div>
-            <label className="block text-xs font-bold mb-1">
+            <label className="mb-1.5 block text-xs font-bold text-slate-600">
               รหัสผ่านใหม่
             </label>
             <input
               type="password"
               autoComplete="new-password"
+              minLength={MIN_ADMIN_PASSWORD_LENGTH}
               value={newAdminPassword}
               onChange={(event) => setNewAdminPassword(event.target.value)}
-              className="w-full p-2 border rounded"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
             />
           </div>
           <div>
-            <label className="block text-xs font-bold mb-1">
+            <label className="mb-1.5 block text-xs font-bold text-slate-600">
               ยืนยันรหัสผ่านใหม่
             </label>
             <input
               type="password"
               autoComplete="new-password"
+              minLength={MIN_ADMIN_PASSWORD_LENGTH}
               value={confirmAdminPassword}
               onChange={(event) =>
                 setConfirmAdminPassword(event.target.value)
               }
-              className="w-full p-2 border rounded"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
             />
           </div>
           <div className="flex items-end">
             <button
               type="submit"
               disabled={isSavingAdmin}
-              className="w-full rounded bg-emerald-600 p-2 px-6 font-bold text-white disabled:cursor-wait disabled:opacity-60"
+              className="w-full rounded-xl bg-emerald-600 px-6 py-2.5 font-bold text-white shadow-sm transition hover:bg-emerald-700 hover:shadow-md disabled:cursor-wait disabled:opacity-60"
             >
               {isSavingAdmin
                 ? "กำลังบันทึก..."
@@ -4289,9 +4304,12 @@ function UserManagement({
         </form>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border p-6 print:hidden">
-        <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-          <UserPlus className="text-emerald-600" /> จัดการรหัสผ่านสภานักเรียน
+      <div className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] print:hidden md:p-7">
+        <h2 className="mb-5 flex items-center gap-3 text-xl font-bold text-slate-800">
+          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-50">
+            <UserPlus className="h-5 w-5 text-emerald-600" />
+          </span>
+          จัดการรหัสผ่านสภานักเรียน
         </h2>
         {studentMessage && (
           <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">
@@ -4300,72 +4318,79 @@ function UserManagement({
         )}
         <form
           onSubmit={handleAddUser}
-          className="grid gap-4 bg-slate-50 p-4 rounded-xl mb-4 items-end md:grid-cols-[1fr_1fr_auto]"
+          className="mb-5 grid items-end gap-4 rounded-2xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:p-5"
         >
           <div className="flex-1">
-            <label className="block text-xs font-bold mb-1">Username</label>
+            <label className="mb-1.5 block text-xs font-bold text-slate-600">
+              Username
+            </label>
             <input
               type="text"
               value={newId}
               onChange={(e) => setNewId(e.target.value)}
-              className="w-full p-2 border rounded"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
               placeholder="เช่น สภา02"
             />
           </div>
           <div className="flex-1">
-            <label className="block text-xs font-bold mb-1">Password</label>
+            <label className="mb-1.5 block text-xs font-bold text-slate-600">
+              Password
+            </label>
             <input
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full p-2 border rounded"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
               placeholder="รหัสผ่าน"
             />
           </div>
           <button
             type="submit"
             disabled={isSaving}
-            className="bg-emerald-600 text-white p-2 px-6 rounded font-bold disabled:cursor-wait disabled:opacity-60"
+            className="rounded-xl bg-emerald-600 px-6 py-2.5 font-bold text-white shadow-sm transition hover:bg-emerald-700 hover:shadow-md disabled:cursor-wait disabled:opacity-60"
           >
             {isSaving ? "กำลังบันทึก..." : "เพิ่ม / เปลี่ยนรหัส"}
           </button>
         </form>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-left bg-white border">
-          <thead>
-            <tr className="bg-slate-100">
-              <th className="p-3">ลำดับ</th>
-              <th className="p-3">Username</th>
-              <th className="p-3">สถานะรหัส</th>
-              <th className="p-3 text-center">ลบ</th>
-            </tr>
-          </thead>
-          <tbody>
-            {credentials.map((c, i) => (
-              <tr key={c.id} className="border-b">
-                <td className="p-3">{i + 1}</td>
-                <td className="p-3 font-bold">{c.id}</td>
-                <td className="p-3">
-                  <span className="bg-slate-100 px-2 py-1 rounded">
-                    ตั้งค่าแล้ว (PBKDF2)
-                  </span>
-                </td>
-                <td className="p-3 text-center">
-                  <button
-                    onClick={() =>
-                      setCredentials((current) =>
-                        current.filter((user) => user.id !== c.id)
-                      )
-                    }
-                    aria-label={`ลบบัญชี ${c.id}`}
-                    className="text-red-500"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </td>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200/80">
+          <table className="w-full min-w-[560px] bg-white text-left">
+            <thead>
+              <tr className="bg-slate-50 text-sm text-slate-600">
+                <th className="p-3.5">ลำดับ</th>
+                <th className="p-3.5">Username</th>
+                <th className="p-3.5">สถานะรหัส</th>
+                <th className="p-3.5 text-center">ลบ</th>
               </tr>
-            ))}
-          </tbody>
+            </thead>
+            <tbody>
+              {credentials.map((c, i) => (
+                <tr
+                  key={c.id}
+                  className="border-b border-slate-100 transition last:border-0 hover:bg-slate-50/60"
+                >
+                  <td className="p-3.5 text-slate-500">{i + 1}</td>
+                  <td className="p-3.5 font-bold text-slate-700">{c.id}</td>
+                  <td className="p-3.5">
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                      ตั้งค่าแล้ว (PBKDF2)
+                    </span>
+                  </td>
+                  <td className="p-3.5 text-center">
+                    <button
+                      onClick={() =>
+                        setCredentials((current) =>
+                          current.filter((user) => user.id !== c.id)
+                        )
+                      }
+                      aria-label={`ลบบัญชี ${c.id}`}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-red-500 transition hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       </div>

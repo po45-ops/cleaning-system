@@ -4,6 +4,17 @@ html {
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Tailwind v4 defaults borders to currentColor; keep form and card lines soft. */
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-slate-200, #e2e8f0);
+  }
+}
+
 /* Keep Thai report headings optically centered in browser, print, and PDF. */
 .formal-report-table thead tr {
   height: 52px !important;
