@@ -5,6 +5,7 @@ import App from "./App";
 import CouncilCredentialNames from "./CouncilCredentialNames";
 import CouncilScheduleWidget from "./CouncilScheduleWidget";
 import StudentScorePrivacy from "./StudentScorePrivacy";
+import { installInspectionSyncGuard } from "./inspection-sync-guard";
 import "./styles.css";
 
 function DefaultLoginEntry() {
@@ -56,6 +57,8 @@ function DefaultLoginEntry() {
 
   return <App />;
 }
+
+installInspectionSyncGuard();
 
 const rootElement = document.getElementById("root");
 const root = createRoot(rootElement!);
