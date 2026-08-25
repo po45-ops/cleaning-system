@@ -187,7 +187,7 @@ type WordAlignment = (typeof AlignmentType)[keyof typeof AlignmentType];
 
 // === URL ฐานข้อมูล Google Sheets ของคุณ ===
 const SCRIPT_URL =
-  "https://script.google.com/macros/s/AKfycbyTSx3ggaJfXtYd_rQ67FoI5pPb8y_LXcTAm6RiSnkf34uiZL5GZBStGVMXyGCHQ5JfEA/exec";
+  "https://script.google.com/macros/s/AKfycbwfmqSlIqJ0-2CoAQ1Uv7nrL47x3zsqToUWP0brNiHBnJGFIvz450w33ANBmltvOjNPTg/exec";
 const STUDENT_CREDENTIALS_KEY = "cleaning_student_credentials_v3";
 const ADMIN_CREDENTIAL_KEY = "cleaning_admin_credential_v2";
 const MIN_ADMIN_PASSWORD_LENGTH = 6;
