@@ -55,6 +55,7 @@ describe("PublicDashboard", () => {
     expect(text).not.toContain("3/3");
     expect(text).toContain("NEW_NOTE");
     expect(text).not.toContain("OLD_NOTE");
+    expect(text).not.toContain("งานที่ต้องดำเนินการ");
     expect(html).not.toContain("PRIVATE_IMAGE");
   });
 });

@@ -1,21 +1,18 @@
 import React, { useMemo } from "react";
 import {
   AlertCircle,
-  BarChart3,
   CalendarDays,
   CheckCircle,
-  ChevronRight,
   Clock,
-  FileText,
   ListChecks,
   Map as MapIcon,
   RefreshCw,
-  Shield,
   Sparkles,
   Star,
-  Upload,
   XCircle,
 } from "lucide-react";
+
+import { formatDateKey, parseLocalDate } from "./date-utils";
 
 type PublicInspection = {
   id: string | number;
@@ -36,12 +33,6 @@ type PublicZone = {
   class?: string;
 };
 
-export type DashboardDestination =
-  | "student"
-  | "teacher"
-  | "calendar"
-  | "report";
-
 type PublicDashboardProps = {
   inspections: PublicInspection[];
   zones: readonly PublicZone[];
@@ -49,9 +40,6 @@ type PublicDashboardProps = {
   error: string;
   lastUpdated: Date | null;
   onRefresh: () => void;
-  onNavigate?: (destination: DashboardDestination) => void;
-  isAuthenticated?: boolean;
-  canViewReports?: boolean;
 };
 
 type ZoneState = "approved" | "pending" | "failed" | "missing";
@@ -59,15 +47,6 @@ type ZoneState = "approved" | "pending" | "failed" | "missing";
 type ZoneSummary = PublicZone & {
   record?: PublicInspection;
   state: ZoneState;
-};
-
-const formatDateKey = (dateValue: string | Date): string => {
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return String(dateValue).slice(0, 10);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 };
 
 const getRecordRevision = (record: PublicInspection): number => {
@@ -80,7 +59,7 @@ const getRecordRevision = (record: PublicInspection): number => {
   const numericId = Number(record.id);
   if (Number.isFinite(numericId)) return numericId;
 
-  const dateValue = new Date(record.date).getTime();
+  const dateValue = parseLocalDate(record.date).getTime();
   return Number.isFinite(dateValue) ? dateValue : 0;
 };
 
@@ -182,9 +161,6 @@ export default function PublicDashboard({
   error,
   lastUpdated,
   onRefresh,
-  onNavigate,
-  isAuthenticated = false,
-  canViewReports = false,
 }: PublicDashboardProps) {
   const today = new Date();
   const todayKey = formatDateKey(today);
@@ -413,7 +389,7 @@ export default function PublicDashboard({
           </article>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
+        <div className="grid grid-cols-1 gap-6">
           <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -535,116 +511,6 @@ export default function PublicDashboard({
             </div>
           </article>
 
-          <div className="space-y-6">
-            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2">
-                <BarChart3 className="h-5 w-5 text-emerald-600" />
-                <h3 className="font-black text-slate-800">งานที่ต้องดำเนินการ</h3>
-              </div>
-              <div className="space-y-2.5">
-                {dashboard.pending > 0 && (
-                  <button
-                    type="button"
-                    disabled={!isAuthenticated || !onNavigate}
-                    onClick={() => onNavigate?.("teacher")}
-                    className="flex w-full items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-left disabled:cursor-default"
-                  >
-                    <Clock className="h-5 w-5 shrink-0 text-amber-500" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-bold text-slate-800">
-                        รออนุมัติ {dashboard.pending} รายการ
-                      </span>
-                      <span className="block text-xs text-slate-500">
-                        ครูผู้ดูแลตรวจสอบผล
-                      </span>
-                    </span>
-                    {isAuthenticated && <ChevronRight className="h-4 w-4" />}
-                  </button>
-                )}
-
-                {dashboard.failed > 0 && (
-                  <button
-                    type="button"
-                    disabled={!isAuthenticated || !onNavigate}
-                    onClick={() => onNavigate?.("teacher")}
-                    className="flex w-full items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-3 text-left disabled:cursor-default"
-                  >
-                    <XCircle className="h-5 w-5 shrink-0 text-rose-500" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-bold text-slate-800">
-                        ไม่ผ่าน {dashboard.failed} เขต
-                      </span>
-                      <span className="block text-xs text-slate-500">
-                        ควรดำเนินการปรับปรุง
-                      </span>
-                    </span>
-                    {isAuthenticated && <ChevronRight className="h-4 w-4" />}
-                  </button>
-                )}
-
-                {dashboard.missing > 0 && (
-                  <button
-                    type="button"
-                    disabled={!isAuthenticated || !onNavigate}
-                    onClick={() => onNavigate?.("student")}
-                    className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left disabled:cursor-default"
-                  >
-                    <Upload className="h-5 w-5 shrink-0 text-slate-500" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-bold text-slate-800">
-                        ยังไม่บันทึก {dashboard.missing} เขต
-                      </span>
-                      <span className="block text-xs text-slate-500">
-                        ติดตามพื้นที่ที่ยังไม่มีข้อมูลวันนี้
-                      </span>
-                    </span>
-                    {isAuthenticated && <ChevronRight className="h-4 w-4" />}
-                  </button>
-                )}
-
-                {!dashboard.pending && !dashboard.failed && !dashboard.missing && (
-                  <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-4">
-                    <CheckCircle className="h-5 w-5 text-emerald-600" />
-                    <p className="text-sm font-bold text-emerald-800">
-                      ดำเนินการครบทุกเขตแล้ว
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {isAuthenticated && onNavigate ? (
-                <div
-                  className={`mt-4 grid grid-cols-1 gap-2 ${
-                    canViewReports
-                      ? "sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2"
-                      : ""
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onNavigate("student")}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700"
-                  >
-                    <Upload className="h-4 w-4" /> บันทึกผล
-                  </button>
-                  {canViewReports && (
-                    <button
-                      type="button"
-                      onClick={() => onNavigate("report")}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:border-emerald-300 hover:text-emerald-700"
-                    >
-                      <FileText className="h-4 w-4" /> ดูรายงาน
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-3 text-xs leading-relaxed text-slate-500">
-                  <Shield className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                  หน้าสาธารณะแสดงข้อมูลสรุปและหมายเหตุจากการตรวจ แต่ไม่แสดงรูปหลักฐาน
-                </div>
-              )}
-            </article>
-          </div>
         </div>
 
         <p className="text-center text-xs text-slate-400">

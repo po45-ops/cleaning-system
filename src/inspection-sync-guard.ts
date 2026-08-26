@@ -1,3 +1,5 @@
+import { formatDateKey } from "./date-utils";
+
 const LEGACY_CLEANING_DATA_API_URL =
   "https://script.google.com/macros/s/AKfycbyTSx3ggaJfXtYd_rQ67FoI5pPb8y_LXcTAm6RiSnkf34uiZL5GZBStGVMXyGCHQ5JfEA/exec";
 const CURRENT_CLEANING_DATA_API_URL =
@@ -26,17 +28,6 @@ type InspectionLike = {
 
 const pendingStatusUpdates = new Map<string, PendingStatusUpdate>();
 let installed = false;
-
-const formatDateKey = (value: unknown): string => {
-  if (!value) return "";
-  const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
-
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
 
 const getRequestUrl = (input: RequestInfo | URL): string => {
   if (typeof input === "string") return input;
@@ -81,7 +72,7 @@ const recordMatchesUpdate = (
 
   return (
     Number(record.zoneId) === update.zoneId &&
-    formatDateKey(record.date) === update.dateKey
+    formatDateKey(String(record.date ?? "")) === update.dateKey
   );
 };
 
@@ -115,7 +106,7 @@ const rememberSuccessfulStatusUpdate = async (
   const update: PendingStatusUpdate = {
     id: String(payload.id ?? "").trim(),
     zoneId: Number(payload.zoneId),
-    dateKey: formatDateKey(payload.date),
+    dateKey: formatDateKey(String(payload.date ?? "")),
     status,
     savedAt: Date.now(),
   };
