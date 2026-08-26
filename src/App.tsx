@@ -3403,7 +3403,13 @@ function ReportView({
       await html2pdf().set(opt).from(exportNode).save();
     } catch (error) {
       console.error(error);
-      alert("สร้างไฟล์ PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      const errorDetail =
+        error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error);
+      alert(
+        `สร้างไฟล์ PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง\n\nรายละเอียด: ${errorDetail}`
+      );
     } finally {
       holder?.remove();
       setIsPrinting(false);
@@ -3500,15 +3506,6 @@ function ReportView({
           padding: 2px 4px;
         }
         .pdf-export-node { box-sizing: border-box; width: 100%; padding: 24px; background: white; }
-        /*
-         * html2canvas positions TH Sarabun PSK by its font baseline, which is
-         * visually lower than the centre of the line box. Keep the editable
-         * preview untouched and compensate only inside the cloned PDF report.
-         */
-        .pdf-export-node .formal-cell-content {
-          position: relative;
-          top: -0.5em;
-        }
         .avoid-break, .photo-record { break-inside: avoid; page-break-inside: avoid; }
         .page-break-before { break-before: page; page-break-before: always; }
         @page { size: A4 ${
