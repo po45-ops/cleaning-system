@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { BarChart3, CalendarDays, RefreshCw, Trophy } from "lucide-react";
 
+import { formatDateKey, parseLocalDate } from "./date-utils";
+
 type Inspection = {
   id: string | number;
   date: string;
@@ -34,6 +36,7 @@ type ScoreRow = {
 
 const SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbwfmqSlIqJ0-2CoAQ1Uv7nrL47x3zsqToUWP0brNiHBnJGFIvz450w33ANBmltvOjNPTg/exec";
+const LOAD_TIMEOUT_MS = 15_000;
 
 const ZONES = [
   { id: 1, className: "ป.1" },
@@ -47,25 +50,8 @@ const ZONES = [
   { id: 9, className: "ม.3" },
 ] as const;
 
-const pad2 = (value: number): string => String(value).padStart(2, "0");
-
-const parseDateOnly = (value: string): Date => {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [year, month, day] = value.split("-").map(Number);
-    return new Date(year, month - 1, day, 12, 0, 0, 0);
-  }
-  return new Date(value);
-};
-
-const formatDateKey = (value: string | Date): string => {
-  const date =
-    value instanceof Date ? new Date(value.getTime()) : parseDateOnly(value);
-  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-};
-
 const formatThaiDate = (value: string): string => {
-  const date = parseDateOnly(value);
+  const date = parseLocalDate(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("th-TH", {
     day: "numeric",
@@ -93,7 +79,7 @@ const getRevision = (record: Inspection): number => {
   }
   const numericId = Number(record.id);
   if (Number.isFinite(numericId)) return numericId;
-  return parseDateOnly(record.date).getTime() || 0;
+  return parseLocalDate(record.date).getTime() || 0;
 };
 
 const pickLatest = (
@@ -227,24 +213,40 @@ export default function SemesterLeaderboard(): React.ReactElement | null {
 
   useEffect(() => {
     let active = true;
+    let requestSequence = 0;
+    let activeController: AbortController | null = null;
 
     const load = async () => {
+      const currentSequence = ++requestSequence;
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
+      const timeoutId = window.setTimeout(
+        () => controller.abort(),
+        LOAD_TIMEOUT_MS
+      );
+
       try {
         const response = await fetch(`${SCRIPT_URL}?refresh=${Date.now()}`, {
           cache: "no-store",
+          signal: controller.signal,
         });
         if (!response.ok) throw new Error("load failed");
         const result = (await response.json()) as ApiResponse;
         if (result.status !== "success") throw new Error("load failed");
-        if (!active) return;
+        if (!active || currentSequence !== requestSequence) return;
         setInspections(
           (Array.isArray(result.data) ? result.data : []).filter(isInspection)
         );
         setLoadError(false);
       } catch {
-        if (active) setLoadError(true);
+        if (active && currentSequence === requestSequence) setLoadError(true);
       } finally {
-        if (active) setIsLoading(false);
+        window.clearTimeout(timeoutId);
+        if (active && currentSequence === requestSequence) {
+          if (activeController === controller) activeController = null;
+          setIsLoading(false);
+        }
       }
     };
 
@@ -252,6 +254,9 @@ export default function SemesterLeaderboard(): React.ReactElement | null {
     const timer = window.setInterval(() => void load(), 30_000);
     return () => {
       active = false;
+      requestSequence += 1;
+      activeController?.abort();
+      activeController = null;
       window.clearInterval(timer);
     };
   }, []);

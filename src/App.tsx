@@ -5,6 +5,11 @@ import {
   isAcademicWeekInTerm,
 } from "./report-utils";
 import {
+  formatDateKey,
+  getLocalWeekday,
+  parseLocalDate,
+} from "./date-utils";
+import {
   createPasswordVerifier,
   verifyPassword,
   type PasswordVerifier,
@@ -57,9 +62,7 @@ import {
   Home,
   LogIn,
 } from "lucide-react";
-import PublicDashboard, {
-  type DashboardDestination,
-} from "./PublicDashboard";
+import PublicDashboard from "./PublicDashboard";
 
 type InspectionStatus = "pending" | "approved" | "rejected";
 
@@ -188,6 +191,7 @@ type WordAlignment = (typeof AlignmentType)[keyof typeof AlignmentType];
 // === URL ฐานข้อมูล Google Sheets ของคุณ ===
 const SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbwfmqSlIqJ0-2CoAQ1Uv7nrL47x3zsqToUWP0brNiHBnJGFIvz450w33ANBmltvOjNPTg/exec";
+const DATA_FETCH_TIMEOUT_MS = 15_000;
 const STUDENT_CREDENTIALS_KEY = "cleaning_student_credentials_v3";
 const ADMIN_CREDENTIAL_KEY = "cleaning_admin_credential_v2";
 const MIN_ADMIN_PASSWORD_LENGTH = 6;
@@ -307,7 +311,8 @@ const getDefaultWeekday = () => {
 
 const formatThaiDateShort = (dateStr: string | Date) => {
   if (!dateStr) return "";
-  const d = new Date(dateStr);
+  const d = parseLocalDate(dateStr);
+  if (Number.isNaN(d.getTime())) return String(dateStr);
   const months = [
     "มกราคม",
     "กุมภาพันธ์",
@@ -325,17 +330,6 @@ const formatThaiDateShort = (dateStr: string | Date) => {
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear() + 543}`;
 };
 
-// 🚀 ฟังก์ชันเสริมเพื่อเคลียร์ Timezone และแปลงวันที่ใน Sheet ให้เป็น YYYY-MM-DD เป๊ะๆ
-const formatDateKey = (dateStr: string | Date) => {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return String(dateStr);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-};
-
 const getInspectionRevisionTimestamp = (item: InspectionRecord): number => {
   for (const value of [item.updatedAt, item.timestamp, item.createdAt]) {
     if (!value) continue;
@@ -346,7 +340,7 @@ const getInspectionRevisionTimestamp = (item: InspectionRecord): number => {
   const numericId = Number(item.id);
   if (Number.isFinite(numericId)) return numericId;
 
-  const dateValue = new Date(item.date).getTime();
+  const dateValue = parseLocalDate(item.date).getTime();
   return Number.isFinite(dateValue) ? dateValue : 0;
 };
 
@@ -568,6 +562,8 @@ export default function App() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [dataError, setDataError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const activeDataRequest = useRef<AbortController | null>(null);
+  const dataRequestSequence = useRef(0);
 
   useEffect(() => {
     if (user) {
@@ -703,14 +699,28 @@ export default function App() {
   }, []);
 
   const fetchFromSheets = async (showLoadingIndicator = false) => {
+    const requestSequence = ++dataRequestSequence.current;
+    activeDataRequest.current?.abort();
+    const controller = new AbortController();
+    activeDataRequest.current = controller;
+    const timeoutId = window.setTimeout(
+      () => controller.abort(),
+      DATA_FETCH_TIMEOUT_MS
+    );
+
     if (showLoadingIndicator) setIsLoadingData(true);
     setDataError("");
     try {
-      const res = await fetch(`${SCRIPT_URL}?refresh=${Date.now()}`);
+      const res = await fetch(`${SCRIPT_URL}?refresh=${Date.now()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
       const json = (await res.json()) as ApiResponse<unknown[]>;
+      if (requestSequence !== dataRequestSequence.current) return;
+
       if (json.status === "success") {
         const uniqueInspections = deduplicateInspections(
           Array.isArray(json.data) ? json.data.filter(isInspectionRecord) : []
@@ -727,10 +737,21 @@ export default function App() {
         throw new Error(json.message || "ฐานข้อมูลไม่ตอบกลับตามรูปแบบที่กำหนด");
       }
     } catch (err) {
+      if (requestSequence !== dataRequestSequence.current) return;
       console.error("โหลดข้อมูลล้มเหลว:", err);
-      setDataError("ไม่สามารถเชื่อมต่อฐานข้อมูลกลางได้ กรุณาลองใหม่อีกครั้ง");
+      setDataError(
+        controller.signal.aborted
+          ? "ฐานข้อมูลใช้เวลาตอบกลับนานเกินไป กรุณาลองรีเฟรชอีกครั้ง"
+          : "ไม่สามารถเชื่อมต่อฐานข้อมูลกลางได้ กรุณาลองใหม่อีกครั้ง"
+      );
     } finally {
-      if (showLoadingIndicator) setIsLoadingData(false);
+      window.clearTimeout(timeoutId);
+      if (requestSequence === dataRequestSequence.current) {
+        if (activeDataRequest.current === controller) {
+          activeDataRequest.current = null;
+        }
+        setIsLoadingData(false);
+      }
     }
   };
 
@@ -746,6 +767,9 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
+      dataRequestSequence.current += 1;
+      activeDataRequest.current?.abort();
+      activeDataRequest.current = null;
       window.clearInterval(refreshInterval);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
@@ -766,8 +790,8 @@ export default function App() {
       const json = await response.json();
       if (json.status === "success") {
         alert("ลบข้อมูลสำเร็จ!");
-        setInspections(
-          inspections.filter((item) => String(item.id) !== String(id))
+        setInspections((current) =>
+          current.filter((item) => String(item.id) !== String(id))
         );
         return true;
       } else {
@@ -862,12 +886,6 @@ export default function App() {
     setUser(null);
     setShowLogin(false);
     setShowLogoutConfirm(false);
-  };
-
-  const handleDashboardNavigate = (destination: DashboardDestination) => {
-    if (destination === "report" && user?.role !== "admin") return;
-    setActiveTab(destination);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   if (!user && showLogin) {
@@ -1093,9 +1111,6 @@ export default function App() {
             error={dataError}
             lastUpdated={lastUpdated}
             onRefresh={() => void fetchFromSheets(true)}
-            onNavigate={handleDashboardNavigate}
-            isAuthenticated
-            canViewReports={user.role === "admin"}
           />
         ) : isLoadingData ? (
           <div className="py-20 text-center text-slate-500 font-bold flex flex-col items-center">
@@ -1534,7 +1549,7 @@ function StudentForm({ onSave, inspections }: StudentFormProps) {
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedDateStr = e.target.value;
-    const day = new Date(selectedDateStr).getDay();
+    const day = getLocalWeekday(selectedDateStr);
     if (day === 0 || day === 6) {
       alert("⚠️ กรุณาเลือกเฉพาะ 'วันจันทร์ - วันศุกร์' เท่านั้นครับ");
       return;
@@ -2233,23 +2248,29 @@ function TeacherApproval({
     status: InspectionStatus
   ) => {
     setProcessingId(id);
-    await updateStatus(id, status);
-    setProcessingId(null);
+    try {
+      await updateStatus(id, status);
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   const handleSaveEdit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!editingItem) return;
     setProcessingId(editingItem.id);
-    const success = await updateInspection(editingItem);
-    if (success) setEditingItem(null);
-    setProcessingId(null);
+    try {
+      const success = await updateInspection(editingItem);
+      if (success) setEditingItem(null);
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   const handleEditDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!editingItem) return;
     const selectedDateStr = e.target.value;
-    const day = new Date(selectedDateStr).getDay();
+    const day = getLocalWeekday(selectedDateStr);
     if (day === 0 || day === 6) {
       alert("⚠️ กรุณาเลือกเฉพาะ 'วันจันทร์ - วันศุกร์' เท่านั้นครับ");
       return;
@@ -2560,7 +2581,7 @@ function ReportView({
   createInspection,
 }: ReportViewProps) {
   const normalizeToMonday = (dateValue: string | Date): string => {
-    const date = new Date(dateValue);
+    const date = parseLocalDate(dateValue);
     if (isNaN(date.getTime())) return formatDateKey(new Date());
     date.setHours(12, 0, 0, 0);
     const day = date.getDay();
@@ -2570,7 +2591,7 @@ function ReportView({
 
   const inferredSemesterStart = (() => {
     const dates = inspections
-      .map((item) => new Date(item.date))
+      .map((item) => parseLocalDate(item.date))
       .filter((date) => !isNaN(date.getTime()))
       .sort((a, b) => a.getTime() - b.getTime());
     return normalizeToMonday(dates[0] || new Date());

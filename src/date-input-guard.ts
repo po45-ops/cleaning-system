@@ -49,33 +49,6 @@ const showWeekdayDateNotice = (): void => {
   }, 3600);
 };
 
-/**
- * Browser Date parsing treats a bare YYYY-MM-DD string as UTC.  Date inputs,
- * however, represent a local calendar date.  Parse only those date-only values
- * as local noon so weekday checks cannot move to a neighbouring day because of
- * timezone/DST differences.  Other Date constructor behaviour is untouched.
- */
-const installLocalDateOnlyParsing = (): void => {
-  const NativeDate = globalThis.Date;
-
-  const LocalDate = new Proxy(NativeDate, {
-    construct(target, args) {
-      if (
-        args.length === 1 &&
-        typeof args[0] === "string" &&
-        /^\d{4}-\d{2}-\d{2}$/.test(args[0])
-      ) {
-        const [year, month, day] = args[0].split("-").map(Number);
-        return new target(year, month - 1, day, 12, 0, 0, 0);
-      }
-
-      return Reflect.construct(target, args);
-    },
-  });
-
-  globalThis.Date = LocalDate as DateConstructor;
-};
-
 const installWeekdayAlertUx = (): void => {
   const nativeAlert = window.alert.bind(window);
 
@@ -95,6 +68,5 @@ export const installDateInputGuard = (): void => {
   if (guardGlobal[DATE_GUARD_FLAG as keyof DateGuardGlobal]) return;
 
   guardGlobal.__cleaningDateInputGuardInstalled = true;
-  installLocalDateOnlyParsing();
   installWeekdayAlertUx();
 };
