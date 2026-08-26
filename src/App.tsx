@@ -3355,6 +3355,28 @@ function ReportView({
 
       const exportNode = element.cloneNode(true) as HTMLElement;
       exportNode.classList.add("pdf-export-node");
+      // html2canvas 1.x cannot parse Tailwind v4's OKLCH color variables.
+      // Override only the report clone with equivalent sRGB values so the
+      // visible application keeps its original palette.
+      const pdfSafeColors: Record<string, string> = {
+        "--color-red-50": "#fef2f2",
+        "--color-amber-50": "#fffbeb",
+        "--color-amber-600": "#d97706",
+        "--color-emerald-50": "#ecfdf5",
+        "--color-emerald-100": "#d1fae5",
+        "--color-emerald-400": "#34d399",
+        "--color-emerald-500": "#10b981",
+        "--color-emerald-600": "#059669",
+        "--color-slate-50": "#f8fafc",
+        "--color-slate-100": "#f1f5f9",
+        "--color-slate-200": "#e2e8f0",
+        "--color-slate-300": "#cbd5e1",
+        "--color-slate-700": "#334155",
+        "--color-slate-800": "#1e293b",
+      };
+      Object.entries(pdfSafeColors).forEach(([property, value]) => {
+        exportNode.style.setProperty(property, value);
+      });
       exportNode
         .querySelectorAll(".screen-only")
         .forEach((node) => node.remove());
@@ -3506,6 +3528,12 @@ function ReportView({
           padding: 2px 4px;
         }
         .pdf-export-node { box-sizing: border-box; width: 100%; padding: 24px; background: white; }
+        .pdf-export-node .formal-report-table:not(.compact-report-table) .formal-cell-content {
+          padding: 0 6px 20px;
+        }
+        .pdf-export-node .formal-report-table.compact-report-table .formal-cell-content {
+          padding: 0 4px 12px;
+        }
         .avoid-break, .photo-record { break-inside: avoid; page-break-inside: avoid; }
         .page-break-before { break-before: page; page-break-before: always; }
         @page { size: A4 ${
