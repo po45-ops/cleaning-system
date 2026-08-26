@@ -3347,12 +3347,7 @@ function ReportView({
     try {
       const { default: html2pdf } = await import("html2pdf.js");
       try {
-        await Promise.all([
-          document.fonts?.load('400 16pt "TH Sarabun PSK"'),
-          document.fonts?.load('700 16pt "TH Sarabun PSK"'),
-          document.fonts?.load('400 13pt "TH Sarabun PSK"'),
-          document.fonts?.load('700 13pt "TH Sarabun PSK"'),
-        ]);
+        await document.fonts?.load('16pt "TH Sarabun PSK"');
         await document.fonts?.ready;
       } catch (fontError) {
         console.warn("Unable to preload TH Sarabun PSK", fontError);
@@ -3376,12 +3371,6 @@ function ReportView({
       holder.style.width = reportMode === "semester" ? "1122px" : "794px";
       holder.appendChild(exportNode);
       document.body.appendChild(holder);
-
-      // Let the cloned report finish font substitution and table layout before
-      // html2canvas measures its cells.
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      });
 
       const opt = {
         margin: [8, 8, 8, 8] as [number, number, number, number],
@@ -3517,17 +3506,8 @@ function ReportView({
          * preview untouched and compensate only inside the cloned PDF report.
          */
         .pdf-export-node .formal-cell-content {
-          height: 44px;
-          min-height: 44px;
-          transform: translateY(-0.5em);
-        }
-        .pdf-export-node .formal-report-table thead .formal-cell-content {
-          height: 48px;
-          min-height: 48px;
-        }
-        .pdf-export-node .formal-report-table.compact-report-table .formal-cell-content {
-          height: 28px;
-          min-height: 28px;
+          position: relative;
+          top: -0.5em;
         }
         .avoid-break, .photo-record { break-inside: avoid; page-break-inside: avoid; }
         .page-break-before { break-before: page; page-break-before: always; }
