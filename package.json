@@ -34,6 +34,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "check:apps-script": "node scripts/validate-apps-script.mjs",
+    "smoke:pages": "node scripts/smoke-pages.mjs",
     "test": "vitest run && npm run check:apps-script"
   }
 }
