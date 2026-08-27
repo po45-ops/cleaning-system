@@ -20,22 +20,6 @@ import {
   type StudentCredential,
 } from "./student-credentials";
 import {
-  AlignmentType,
-  BorderStyle,
-  Document,
-  ImageRun,
-  Packer,
-  PageOrientation,
-  Paragraph,
-  ShadingType,
-  Table,
-  TableCell,
-  TableRow,
-  TextRun,
-  VerticalAlign,
-  WidthType,
-} from "docx";
-import {
   Camera,
   CheckCircle,
   FileSpreadsheet,
@@ -186,12 +170,18 @@ type SpreadsheetStyleOptions = {
   tableStartRow?: number;
   totalRows?: number[];
 };
-type WordAlignment = (typeof AlignmentType)[keyof typeof AlignmentType];
+type DocxModule = typeof import("docx");
+type WordAlignment =
+  DocxModule["AlignmentType"][keyof DocxModule["AlignmentType"]];
+type WordImageRun = InstanceType<DocxModule["ImageRun"]>;
+type WordParagraph = InstanceType<DocxModule["Paragraph"]>;
+type WordTable = InstanceType<DocxModule["Table"]>;
 
 // === URL ฐานข้อมูล Google Sheets ของคุณ ===
 const SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbwfmqSlIqJ0-2CoAQ1Uv7nrL47x3zsqToUWP0brNiHBnJGFIvz450w33ANBmltvOjNPTg/exec";
 const DATA_FETCH_TIMEOUT_MS = 15_000;
+const REPORT_IMAGE_LOAD_TIMEOUT_MS = 8_000;
 const STUDENT_CREDENTIALS_KEY = "cleaning_student_credentials_v3";
 const ADMIN_CREDENTIAL_KEY = "cleaning_admin_credential_v2";
 const MIN_ADMIN_PASSWORD_LENGTH = 6;
@@ -203,6 +193,11 @@ const LEGACY_CREDENTIAL_KEYS = [
   LEGACY_SEED_KEY,
   PREVIOUS_HASHED_CREDENTIALS_KEY,
 ];
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
 
 // --- ข้อมูลพื้นฐาน ---
 const ZONES = [
@@ -738,9 +733,10 @@ export default function App() {
       }
     } catch (err) {
       if (requestSequence !== dataRequestSequence.current) return;
-      console.error("โหลดข้อมูลล้มเหลว:", err);
+      const aborted = controller.signal.aborted || isAbortError(err);
+      if (!aborted) console.error("โหลดข้อมูลล้มเหลว:", err);
       setDataError(
-        controller.signal.aborted
+        aborted
           ? "ฐานข้อมูลใช้เวลาตอบกลับนานเกินไป กรุณาลองรีเฟรชอีกครั้ง"
           : "ไม่สามารถเชื่อมต่อฐานข้อมูลกลางได้ กรุณาลองใหม่อีกครั้ง"
       );
@@ -3018,14 +3014,24 @@ function ReportView({
   };
 
   const createWordCell = (
+    docx: DocxModule,
     value: string | number,
     {
       bold = false,
       fill = "FFFFFF",
-      align = AlignmentType.CENTER,
+      align = docx.AlignmentType.CENTER,
     }: { bold?: boolean; fill?: string; align?: WordAlignment } = {}
-  ) =>
-    new TableCell({
+  ) => {
+    const {
+      BorderStyle,
+      Paragraph,
+      ShadingType,
+      TableCell,
+      TextRun,
+      VerticalAlign,
+    } = docx;
+
+    return new TableCell({
       verticalAlign: VerticalAlign.CENTER,
       margins: { top: 80, bottom: 80, left: 80, right: 80 },
       shading: { fill, type: ShadingType.CLEAR },
@@ -3050,29 +3056,65 @@ function ReportView({
         }),
       ],
     });
+  };
+
+  const loadWordImageDimensions = (
+    source: string,
+    { maxWidth, maxHeight }: { maxWidth: number; maxHeight: number }
+  ): Promise<{ width: number; height: number }> =>
+    new Promise((resolve) => {
+      const image = new Image();
+      let resolved = false;
+      const fallback = { width: maxWidth, height: maxHeight };
+      const finish = (dimensions: { width: number; height: number }) => {
+        if (resolved) return;
+        resolved = true;
+        window.clearTimeout(timeoutId);
+        image.onload = null;
+        image.onerror = null;
+        image.src = "";
+        resolve(dimensions);
+      };
+      const timeoutId = window.setTimeout(
+        () => finish(fallback),
+        REPORT_IMAGE_LOAD_TIMEOUT_MS
+      );
+      image.onload = () =>
+        finish({ width: image.naturalWidth, height: image.naturalHeight });
+      image.onerror = () => finish(fallback);
+      image.src = source;
+    });
+
+  const fetchWordImageData = async (source: string): Promise<Uint8Array> => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(
+      () => controller.abort(),
+      REPORT_IMAGE_LOAD_TIMEOUT_MS
+    );
+    try {
+      const response = await fetch(source, { signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return new Uint8Array(await response.arrayBuffer());
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
 
   const createWordImageRun = async (
+    docx: DocxModule,
     source: string,
     { maxWidth = 155, maxHeight = 110 } = {}
-  ): Promise<ImageRun | null> => {
+  ): Promise<WordImageRun | null> => {
     if (!source) return null;
     try {
-      const [response, dimensions] = await Promise.all([
-        fetch(source),
-        new Promise<{ width: number; height: number }>((resolve) => {
-          const image = new Image();
-          image.onload = () =>
-            resolve({ width: image.naturalWidth, height: image.naturalHeight });
-          image.onerror = () => resolve({ width: maxWidth, height: maxHeight });
-          image.src = source;
-        }),
+      const [data, dimensions] = await Promise.all([
+        fetchWordImageData(source),
+        loadWordImageDimensions(source, { maxWidth, maxHeight }),
       ]);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = new Uint8Array(await response.arrayBuffer());
       const naturalWidth = Math.max(1, Number(dimensions.width) || maxWidth);
       const naturalHeight = Math.max(1, Number(dimensions.height) || maxHeight);
       const scale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight);
-      return new ImageRun({
+      return new docx.ImageRun({
         data,
         transformation: {
           width: Math.max(1, Math.round(naturalWidth * scale)),
@@ -3085,8 +3127,21 @@ function ReportView({
     }
   };
 
-  const createWordPhotoCell = (imageRun: ImageRun | null) =>
-    new TableCell({
+  const createWordPhotoCell = (
+    docx: DocxModule,
+    imageRun: WordImageRun | null
+  ) => {
+    const {
+      AlignmentType,
+      BorderStyle,
+      Paragraph,
+      TableCell,
+      TextRun,
+      VerticalAlign,
+      WidthType,
+    } = docx;
+
+    return new TableCell({
       width: { size: 33.33, type: WidthType.PERCENTAGE },
       verticalAlign: VerticalAlign.CENTER,
       margins: { top: 80, bottom: 80, left: 60, right: 60 },
@@ -3114,10 +3169,23 @@ function ReportView({
         }),
       ],
     });
+  };
 
   const exportToWord = async () => {
     setExporting("word");
     try {
+      const docx = await import("docx");
+      const {
+        AlignmentType,
+        Document,
+        Packer,
+        PageOrientation,
+        Paragraph,
+        Table,
+        TableRow,
+        TextRun,
+        WidthType,
+      } = docx;
       const title =
         reportMode === "weekly"
           ? `ตารางบันทึกการปฏิบัติงานทำความสะอาดเขตพื้นที่รับผิดชอบ\nสัปดาห์ที่ ${selectedReportWeek}`
@@ -3173,7 +3241,7 @@ function ReportView({
             tableHeader: true,
             cantSplit: true,
             children: headerRow.map((value) =>
-              createWordCell(value, { bold: true, fill: "D1FAE5" })
+              createWordCell(docx, value, { bold: true, fill: "D1FAE5" })
             ),
           }),
           ...dataRows.map(
@@ -3181,7 +3249,7 @@ function ReportView({
               new TableRow({
                 cantSplit: true,
                 children: row.map((value, columnIndex) =>
-                  createWordCell(value, {
+                  createWordCell(docx, value, {
                     bold:
                       columnIndex === 0 ||
                       (reportMode === "semester" &&
@@ -3195,9 +3263,12 @@ function ReportView({
         ],
       });
 
-      const children: Array<Paragraph | Table> = [];
+      const children: Array<WordParagraph | WordTable> = [];
       const logoRun = schoolLogo
-        ? await createWordImageRun(schoolLogo, { maxWidth: 85, maxHeight: 85 })
+        ? await createWordImageRun(docx, schoolLogo, {
+            maxWidth: 85,
+            maxHeight: 85,
+          })
         : null;
       if (logoRun) {
         children.push(
@@ -3306,8 +3377,10 @@ function ReportView({
           const sourceImages: string[] = Array.isArray(item.images)
             ? item.images.slice(0, 3).map((source: any) => String(source))
             : [];
-          const imageRuns: Array<ImageRun | null> = await Promise.all(
-            sourceImages.map((source: string) => createWordImageRun(source))
+          const imageRuns: Array<WordImageRun | null> = await Promise.all(
+            sourceImages.map((source: string) =>
+              createWordImageRun(docx, source)
+            )
           );
           while (imageRuns.length < 3) imageRuns.push(null);
           children.push(
@@ -3317,7 +3390,7 @@ function ReportView({
                 new TableRow({
                   cantSplit: true,
                   children: imageRuns.map((imageRun) =>
-                    createWordPhotoCell(imageRun)
+                    createWordPhotoCell(docx, imageRun)
                   ),
                 }),
               ],
