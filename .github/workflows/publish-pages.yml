@@ -57,53 +57,16 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     permissions:
-      actions: read
       pages: write
       id-token: write
     runs-on: ubuntu-latest
     needs: build
     steps:
-      # This repository still has the legacy branch-based Pages publisher enabled.
-      # Let it finish first so the Vite artifact below is always the final deploy.
-      - name: Wait for legacy Pages deployment
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          missing_count=0
-          for attempt in $(seq 1 60); do
-            status="$(
-              gh api --method GET \
-                "/repos/${GITHUB_REPOSITORY}/actions/runs" \
-                -f head_sha="${GITHUB_SHA}" \
-                -f event=dynamic \
-                -f per_page=10 \
-                --jq '.workflow_runs | map(select(.name == "pages build and deployment")) | first | .status // "missing"'
-            )"
-
-            if [ "${status}" = "completed" ]; then
-              echo "Legacy Pages deployment completed; deploying the Vite build next."
-              break
-            fi
-
-            if [ "${status}" = "missing" ]; then
-              missing_count=$((missing_count + 1))
-              if [ "${missing_count}" -ge 3 ]; then
-                echo "No legacy Pages deployment found; continuing."
-                break
-              fi
-            else
-              missing_count=0
-              echo "Legacy Pages deployment status: ${status}"
-            fi
-
-            if [ "${attempt}" -eq 60 ]; then
-              echo "Timed out waiting for the legacy deployment; continuing with Vite."
-              break
-            fi
-            sleep 5
-          done
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+      - name: Smoke test deployed site
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: npm run smoke:pages
