@@ -2596,6 +2596,7 @@ function ReportView({
   const [selectedReportWeek, setSelectedReportWeek] = useState(1);
   const [isPrinting, setIsPrinting] = useState(false);
   const [exporting, setExporting] = useState("");
+  const [pdfError, setPdfError] = useState("");
   const [savingCell, setSavingCell] = useState("");
   const [savedCell, setSavedCell] = useState("");
   const [reportMode, setReportMode] = useState("weekly");
@@ -3435,6 +3436,7 @@ function ReportView({
   const printReport = async () => {
     const element = document.getElementById("printable-area");
     if (!element) return;
+    setPdfError("");
     setIsPrinting(true);
     setExporting("pdf");
     let holder: HTMLDivElement | null = null;
@@ -3497,7 +3499,8 @@ function ReportView({
       await html2pdf().set(opt).from(exportNode).save();
     } catch (error) {
       console.error(error);
-      alert("สร้างไฟล์ PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      // Native alerts block finally, leaving the export controls disabled.
+      setPdfError("สร้างไฟล์ PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง หรือส่งออกเป็น Word");
     } finally {
       holder?.remove();
       setIsPrinting(false);
@@ -3663,6 +3666,11 @@ function ReportView({
         </div>
 
         <div className="space-y-5 p-5 md:p-6">
+          {pdfError && (
+            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
+              {pdfError}
+            </div>
+          )}
           <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
             <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 xl:w-auto">
               <button
