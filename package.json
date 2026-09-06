@@ -36,5 +36,8 @@
     "check:apps-script": "node scripts/validate-apps-script.mjs",
     "smoke:pages": "node scripts/smoke-pages.mjs",
     "test": "vitest run && npm run check:apps-script"
+  },
+  "overrides": {
+    "html2canvas": "npm:html2canvas-pro@2.4.1"
   }
 }
