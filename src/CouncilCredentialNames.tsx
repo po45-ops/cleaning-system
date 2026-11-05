@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { getServerToken } from "./server-auth";
 
 type CouncilAccountOwner = {
   accountId: string;
@@ -15,6 +16,85 @@ const OWNER_BY_ACCOUNT = new Map(
     { ...owner, groupNumber: index + 1 },
   ])
 );
+
+const SCHEDULE_STORAGE_KEY = "cleaning_council_schedule_v1";
+
+/** อ่านรายชื่อสมาชิกของบัญชีสภาจากตารางหมุนเวียนที่แก้ล่าสุด */
+const readGroupMembers = (accountId: string): string[] => {
+  try {
+    const store = JSON.parse(
+      localStorage.getItem(SCHEDULE_STORAGE_KEY) || "{}"
+    ) as Record<
+      string,
+      { updatedAt?: string; groups?: { accountId?: string; members?: string[] }[] }
+    >;
+    const schedules = Object.values(store).sort((a, b) =>
+      String(b?.updatedAt || "").localeCompare(String(a?.updatedAt || ""))
+    );
+    for (const schedule of schedules) {
+      const group = schedule?.groups?.find(
+        (item) => item.accountId?.toLowerCase() === accountId.toLowerCase()
+      );
+      const members = (group?.members || []).filter(
+        (name) => typeof name === "string" && name.trim()
+      );
+      if (members.length > 0) return members;
+    }
+  } catch {
+    // ไม่มีข้อมูลในเครื่องนี้
+  }
+  return [];
+};
+
+const DATA_API_URL =
+  "https://script.google.com/macros/s/AKfycbwfmqSlIqJ0-2CoAQ1Uv7nrL47x3zsqToUWP0brNiHBnJGFIvz450w33ANBmltvOjNPTg/exec";
+const REVEAL_SECONDS = 30;
+
+// รหัสที่แอดมินกด "แสดงรหัส" เก็บในหน่วยความจำชั่วคราวเท่านั้น ไม่เขียนลง localStorage
+let revealedPasswords: Record<string, string> | null = null;
+let revealTimer = 0;
+let revealMessage = "";
+let rerender: () => void = () => undefined;
+
+const hidePasswords = (): void => {
+  revealedPasswords = null;
+  revealMessage = "";
+  window.clearTimeout(revealTimer);
+  rerender();
+};
+
+const revealPasswords = async (): Promise<void> => {
+  if (revealedPasswords) return hidePasswords();
+  if (!getServerToken()) {
+    revealMessage = "ต้องเข้าสู่ระบบแอดมินด้วยรหัสบนเซิร์ฟเวอร์ก่อน (ออกแล้วเข้าใหม่)";
+    rerender();
+    return;
+  }
+  try {
+    // fetch ถูกห่อโดย installServerAuth ให้แนบ token ให้อัตโนมัติ
+    const response = await fetch(DATA_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "listCouncilPasswords" }),
+    });
+    const result = (await response.json()) as {
+      status?: string;
+      message?: string;
+      passwords?: Record<string, string>;
+    };
+    if (result.status === "success" && result.passwords) {
+      revealedPasswords = result.passwords;
+      revealMessage = `จะซ่อนอัตโนมัติใน ${REVEAL_SECONDS} วินาที`;
+      window.clearTimeout(revealTimer);
+      revealTimer = window.setTimeout(hidePasswords, REVEAL_SECONDS * 1000);
+    } else {
+      revealMessage = result.message || "แสดงรหัสไม่สำเร็จ";
+    }
+  } catch {
+    revealMessage = "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้";
+  }
+  rerender();
+};
 
 const patchCredentialTable = (): void => {
   const heading = Array.from(
@@ -37,6 +117,29 @@ const patchCredentialTable = (): void => {
     headerRow.insertBefore(ownerHeader, headerRow.lastElementChild);
   }
 
+  if (headerRow) {
+    let pwHeader = headerRow.querySelector<HTMLElement>("[data-council-pw-header]");
+    if (!pwHeader) {
+      pwHeader = document.createElement("th");
+      pwHeader.dataset.councilPwHeader = "true";
+      pwHeader.className = "p-3 min-w-[170px]";
+      headerRow.insertBefore(pwHeader, headerRow.lastElementChild);
+      pwHeader.addEventListener("click", (event) => {
+        if ((event.target as HTMLElement).closest("button")) void revealPasswords();
+      });
+    }
+    const label = revealedPasswords ? "ซ่อนรหัส" : "แสดงรหัส";
+    const html = `รหัสผ่าน <button type="button" class="ml-1 rounded-lg border border-slate-300 px-2 py-0.5 text-xs font-semibold">${label}</button>${
+      revealMessage ? `<div class="mt-1 text-xs font-normal text-amber-600"></div>` : ""
+    }`;
+    if (pwHeader.dataset.state !== `${label}|${revealMessage}`) {
+      pwHeader.innerHTML = html;
+      const note = pwHeader.querySelector("div");
+      if (note) note.textContent = revealMessage;
+      pwHeader.dataset.state = `${label}|${revealMessage}`;
+    }
+  }
+
   table.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row) => {
     const cells = row.querySelectorAll<HTMLTableCellElement>("td");
     const accountId = cells[1]?.textContent?.trim().toLowerCase() || "";
@@ -52,8 +155,27 @@ const patchCredentialTable = (): void => {
       row.insertBefore(ownerCell, row.lastElementChild);
     }
 
+    let pwCell = row.querySelector<HTMLTableCellElement>("[data-council-pw-cell]");
+    if (!pwCell) {
+      pwCell = document.createElement("td");
+      pwCell.dataset.councilPwCell = "true";
+      pwCell.className = "p-3 font-mono text-slate-700";
+      row.insertBefore(pwCell, row.lastElementChild);
+    }
+    const pwText = revealedPasswords
+      ? revealedPasswords[accountId] ||
+        revealedPasswords[owner?.accountId || ""] ||
+        "ยังไม่มีรหัสที่บันทึกไว้ (ตั้งรหัสใหม่)"
+      : "••••••";
+    if (pwCell.textContent !== pwText) pwCell.textContent = pwText;
+
+    const members = owner ? readGroupMembers(owner.accountId) : [];
     const nextText = owner
-      ? `กลุ่มที่ ${owner.groupNumber}: ${owner.accountId}`
+      ? `กลุ่มที่ ${owner.groupNumber}: ${
+          members.length > 0
+            ? members.join(", ")
+            : "ยังไม่ได้ระบุรายชื่อสมาชิก (เพิ่มได้ที่ตารางหมุนเวียนสภา)"
+        }`
       : "ยังไม่ได้ระบุรายชื่อนักเรียนผู้รับผิดชอบ";
 
     if (ownerCell.textContent !== nextText) {
@@ -212,6 +334,7 @@ export default function CouncilCredentialNames(): null {
       });
     };
 
+    rerender = patchScreen;
     patchScreen();
     const observer = new MutationObserver(patchScreen);
     observer.observe(document.body, {
