@@ -8,6 +8,7 @@ import SemesterLeaderboard from "./SemesterLeaderboard";
 import StudentScorePrivacy from "./StudentScorePrivacy";
 import { installDateInputGuard } from "./date-input-guard";
 import { installInspectionSyncGuard } from "./inspection-sync-guard";
+import { installServerAuth } from "./server-auth";
 import "./styles.css";
 
 function DefaultLoginEntry() {
@@ -60,6 +61,7 @@ function DefaultLoginEntry() {
   return <App />;
 }
 
+installServerAuth();
 installDateInputGuard();
 installInspectionSyncGuard();
 

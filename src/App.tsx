@@ -10,6 +10,12 @@ import {
   parseLocalDate,
 } from "./date-utils";
 import {
+  AUTH_EXPIRED_EVENT,
+  clearServerSession,
+  serverLogin,
+  serverLogout,
+} from "./server-auth";
+import {
   createPasswordVerifier,
   verifyPassword,
   type PasswordVerifier,
@@ -325,6 +331,35 @@ const formatThaiDateShort = (dateStr: string | Date) => {
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear() + 543}`;
 };
 
+const formatThaiDateCompact = (dateStr: string | Date) => {
+  if (!dateStr) return "";
+  const d = parseLocalDate(dateStr);
+  if (Number.isNaN(d.getTime())) return String(dateStr);
+  const months = [
+    "ม.ค.",
+    "ก.พ.",
+    "มี.ค.",
+    "เม.ย.",
+    "พ.ค.",
+    "มิ.ย.",
+    "ก.ค.",
+    "ส.ค.",
+    "ก.ย.",
+    "ต.ค.",
+    "พ.ย.",
+    "ธ.ค.",
+  ];
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear() + 543}`;
+};
+
+// Thai academic year: Jan-Apr still belongs to the academic year that began
+// in the previous calendar year (semester 2).
+const getThaiAcademicYear = (date: Date): number =>
+  date.getFullYear() + 543 - (date.getMonth() <= 3 ? 1 : 0);
+
+// 21 weeks x 5 school days x max 3 points per day.
+const SEMESTER_MAX_SCORE = 21 * 5 * 3;
+
 const getInspectionRevisionTimestamp = (item: InspectionRecord): number => {
   for (const value of [item.updatedAt, item.timestamp, item.createdAt]) {
     if (!value) continue;
@@ -565,9 +600,19 @@ export default function App() {
       localStorage.setItem("cleaning_auth_user", JSON.stringify(user));
     } else {
       localStorage.removeItem("cleaning_auth_user");
+      clearServerSession();
       setActiveTab("overview");
     }
   }, [user]);
+
+  useEffect(() => {
+    const handleExpired = () => {
+      alert("หมดเวลาเข้าสู่ระบบ กรุณาเข้าสู่ระบบอีกครั้ง");
+      setUser(null);
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleExpired);
+  }, []);
 
   const [schoolLogo, setSchoolLogo] = useState<string>(() => {
     return localStorage.getItem("cleaning_school_logo") || "";
@@ -879,6 +924,7 @@ export default function App() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const confirmLogout = () => {
+    void serverLogout();
     setUser(null);
     setShowLogin(false);
     setShowLogoutConfirm(false);
@@ -967,7 +1013,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-20 md:pb-0 print:bg-white print:pb-0">
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-20 md:pb-24 print:bg-white print:pb-0">
       <header className="bg-emerald-600 text-white p-3 md:p-4 shadow-md print:hidden sticky top-0 z-40">
         <div className="max-w-[1500px] mx-auto flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
@@ -1312,6 +1358,24 @@ function LoginScreen({
           setError("กรุณากรอกรหัสประจำตัวและรหัสผ่านให้ครบถ้วน");
           return;
         }
+        // 1) ให้เซิร์ฟเวอร์ตรวจรหัสก่อน (ปลอดภัยกว่าตรวจในเบราว์เซอร์)
+        const serverResult = await serverLogin({
+          role: "student",
+          id: normalizedStudentId,
+          password: studentPassword,
+        });
+        if (serverResult.ok) {
+          onLogin({
+            role: "student",
+            id: serverResult.id ?? normalizedStudentId,
+          });
+          return;
+        }
+        if (serverResult.code !== "not_configured") {
+          setError(serverResult.message);
+          return;
+        }
+        // 2) เซิร์ฟเวอร์ยังไม่ได้ตั้งรหัสบัญชีนี้ -> ใช้วิธีเดิมในเครื่องชั่วคราว
         if (!storedStudentCredential) {
           setError("ไม่พบบัญชีสภานักเรียนนี้ หรือบัญชีถูกปิดใช้งาน");
           return;
@@ -1324,6 +1388,18 @@ function LoginScreen({
       } else {
         if (!password) {
           setError("กรุณากรอกรหัสผ่านแอดมิน");
+          return;
+        }
+        const adminServerResult = await serverLogin({
+          role: "admin",
+          password,
+        });
+        if (adminServerResult.ok) {
+          onLogin({ role: "admin" });
+          return;
+        }
+        if (adminServerResult.code !== "not_configured") {
+          setError(adminServerResult.message);
           return;
         }
         if (adminCredential) {
@@ -2623,7 +2699,7 @@ function ReportView({
       director: "",
       headStudentAffairs: "",
       term: "1",
-      year: String(new Date().getFullYear() + 543),
+      year: String(getThaiAcademicYear(new Date())),
       semesterStart: inferredSemesterStart,
     };
     const saved = localStorage.getItem("cleaning_report_settings");
@@ -2647,7 +2723,7 @@ function ReportView({
           inferredDate.getMonth() >= 4 && inferredDate.getMonth() <= 9
             ? "1"
             : "2";
-        inferredYear = String(inferredDate.getFullYear() + 543);
+        inferredYear = String(getThaiAcademicYear(inferredDate));
       }
       const teacher =
         typeof record.teacher === "string" ? record.teacher : "";
@@ -2836,7 +2912,7 @@ function ReportView({
           [
             "คิดเป็น %",
             ...ZONES.map((zone) =>
-              Number(((getZoneTotalSemester(zone.id) / 315) * 100).toFixed(0))
+              Number(((getZoneTotalSemester(zone.id) / SEMESTER_MAX_SCORE) * 100).toFixed(0))
             ),
           ],
         ];
@@ -3230,7 +3306,7 @@ function ReportView({
         dataRows.push([
           "คิดเป็น %",
           ...ZONES.map((zone) =>
-            ((getZoneTotalSemester(zone.id) / 315) * 100).toFixed(0)
+            ((getZoneTotalSemester(zone.id) / SEMESTER_MAX_SCORE) * 100).toFixed(0)
           ),
         ]);
       }
@@ -3629,7 +3705,7 @@ function ReportView({
                 Word, PDF และ Excel เป็นไฟล์มาตรฐาน พร้อมจัดแนวกระดาษและหัวตารางให้เหมาะกับรายงานแต่ละแบบ
               </p>
             </div>
-            <div className="grid grid-cols-3 gap-2 lg:min-w-[440px]">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[560px]">
               <button
                 onClick={exportToExcel}
                 disabled={Boolean(exporting)}
@@ -3660,6 +3736,16 @@ function ReportView({
                 )}
                 <span className="block text-sm font-bold">PDF</span>
                 <span className="hidden text-[11px] text-slate-300 sm:block">A4 พร้อมพิมพ์</span>
+              </button>
+              <button
+                onClick={() => window.print()}
+                disabled={Boolean(exporting) || isPrinting}
+                className="group rounded-xl border border-white/20 bg-white p-3 text-left text-slate-800 shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
+                title="เปิดหน้าต่างพิมพ์ของเบราว์เซอร์ ตัวอักษรคมชัด เลือกคัดลอกได้ หรือเลือก 'บันทึกเป็น PDF'"
+              >
+                <Printer className="mb-2 h-5 w-5 text-slate-600" />
+                <span className="block text-sm font-bold">พิมพ์</span>
+                <span className="hidden text-[11px] text-slate-500 sm:block">ตัวอักษรคมชัด</span>
               </button>
             </div>
           </div>
@@ -3718,7 +3804,7 @@ function ReportView({
                       const dates = getWeekDatesForWeek(week);
                       return (
                         <option key={week} value={week}>
-                          สัปดาห์ที่ {week} · {dates[0]} ถึง {dates[4]}
+                          สัปดาห์ที่ {week} · {formatThaiDateCompact(dates[0])} – {formatThaiDateCompact(dates[4])}
                         </option>
                       );
                     })}
@@ -4238,7 +4324,7 @@ function ReportView({
                         {ZONES.map((zone) => {
                           const total = getZoneTotalSemester(zone.id);
                           const percent =
-                            total > 0 ? ((total / 315) * 100).toFixed(0) : "-";
+                            total > 0 ? ((total / SEMESTER_MAX_SCORE) * 100).toFixed(0) : "-";
                           return (
                             <td
                               key={`p-${zone.id}`}
@@ -4268,7 +4354,7 @@ function ReportView({
                         im = 0;
                       ZONES.forEach((z) => {
                         const score = getZoneTotalSemester(z.id);
-                        const pct = score > 0 ? (score / 315) * 100 : 0;
+                        const pct = score > 0 ? (score / SEMESTER_MAX_SCORE) * 100 : 0;
                         if (pct >= 80) ex++;
                         else if (pct >= 70) gd++;
                         else if (pct >= 50) fr++;
@@ -4433,8 +4519,8 @@ function UserManagement({
       return alert("กรุณากรอกข้อมูลให้ครบ");
     if (!COUNCIL_ACCOUNT_IDS.includes(normalizedId))
       return alert("บัญชีต้องอยู่ระหว่าง สภา01 ถึง สภา09");
-    if (newPassword.length < 4)
-      return alert("รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร");
+    if (newPassword.length < 6)
+      return alert("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
     const isReplacing = credentials.some((item) => item.id === normalizedId);
     setIsSaving(true);
     try {
@@ -4609,9 +4695,9 @@ function UserManagement({
             <thead>
               <tr className="bg-slate-50 text-sm text-slate-600">
                 <th className="p-3.5">ลำดับ</th>
-                <th className="p-3.5">Username</th>
+                <th className="p-3.5">ชื่อบัญชี</th>
                 <th className="p-3.5">สถานะรหัส</th>
-                <th className="p-3.5 text-center">ลบ</th>
+                <th className="p-3.5 text-center">ลบบัญชี</th>
               </tr>
             </thead>
             <tbody>
@@ -4624,17 +4710,24 @@ function UserManagement({
                   <td className="p-3.5 font-bold text-slate-700">{c.id}</td>
                   <td className="p-3.5">
                     <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
-                      ตั้งค่าแล้ว (PBKDF2)
+                      ตั้งรหัสแล้ว
                     </span>
                   </td>
                   <td className="p-3.5 text-center">
                     <button
-                      onClick={() =>
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `ต้องการลบรหัสของบัญชี ${c.id} ใช่หรือไม่?\nบัญชีนี้จะเข้าสู่ระบบไม่ได้จนกว่าจะตั้งรหัสใหม่`
+                          )
+                        )
+                          return;
                         setCredentials((current) =>
                           current.filter((user) => user.id !== c.id)
-                        )
-                      }
+                        );
+                      }}
                       aria-label={`ลบบัญชี ${c.id}`}
+                      title="ลบรหัสของบัญชีนี้"
                       className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-red-500 transition hover:bg-red-50 hover:text-red-600"
                     >
                       <Trash2 className="h-4 w-4" />
