@@ -3634,6 +3634,48 @@ function ReportView({
     }
   };
 
+  /**
+   * ปุ่ม "พิมพ์": รอให้รูปทุกใบโหลดครบก่อนเปิดหน้าต่างพิมพ์
+   * (ถ้าสั่งพิมพ์ตอนรูปยังโหลดไม่เสร็จ Chrome จะพิมพ์รูปเป็นแถบดำ/เทา/ขาว)
+   */
+  const printWithImages = async () => {
+    const element = document.getElementById("printable-area");
+    if (!element) return;
+    setExportNotice("");
+    setExporting("print");
+    let missingImages = 0;
+    try {
+      await Promise.all(
+        Array.from(element.querySelectorAll("img")).map(async (img) => {
+          const source = img.getAttribute("src") || "";
+          if (!source || source.startsWith("data:")) return;
+          const loaded = await loadReportImage(source);
+          if (!loaded) missingImages += 1;
+          img.setAttribute("src", loaded ? loaded.dataUrl : MISSING_IMAGE_PLACEHOLDER);
+          try {
+            await img.decode();
+          } catch {
+            // พิมพ์ต่อได้
+          }
+        })
+      );
+      try {
+        await document.fonts?.ready;
+      } catch {
+        // ใช้ฟอนต์สำรอง
+      }
+    } finally {
+      setExporting("");
+    }
+    if (missingImages > 0) {
+      setExportNotice(
+        `ดึงรูปไม่ได้ ${missingImages} รูป (แสดงเป็น "ไม่มีรูปภาพ") รอสักครู่แล้วกดพิมพ์ใหม่ได้`
+      );
+    }
+    // รอให้ React แสดงผลปุ่มกลับเป็นปกติก่อนเปิดหน้าต่างพิมพ์
+    window.setTimeout(() => window.print(), 50);
+  };
+
   const printReport = async () => {
     const element = document.getElementById("printable-area");
     if (!element) return;
@@ -3886,13 +3928,19 @@ function ReportView({
                 <span className="hidden text-[11px] text-slate-300 sm:block">A4 พร้อมพิมพ์</span>
               </button>
               <button
-                onClick={() => window.print()}
+                onClick={() => void printWithImages()}
                 disabled={Boolean(exporting) || isPrinting}
                 className="group rounded-xl border border-white/20 bg-white p-3 text-left text-slate-800 shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
                 title="เปิดหน้าต่างพิมพ์ของเบราว์เซอร์ ตัวอักษรคมชัด เลือกคัดลอกได้ หรือเลือก 'บันทึกเป็น PDF'"
               >
-                <Printer className="mb-2 h-5 w-5 text-slate-600" />
-                <span className="block text-sm font-bold">พิมพ์</span>
+                {exporting === "print" ? (
+                  <Clock className="mb-2 h-5 w-5 animate-spin text-slate-600" />
+                ) : (
+                  <Printer className="mb-2 h-5 w-5 text-slate-600" />
+                )}
+                <span className="block text-sm font-bold">
+                  {exporting === "print" ? "กำลังเตรียมรูป..." : "พิมพ์"}
+                </span>
                 <span className="hidden text-[11px] text-slate-500 sm:block">ตัวอักษรคมชัด</span>
               </button>
             </div>

@@ -67,10 +67,17 @@ const fetchBlob = async (source: string): Promise<Blob> => {
         mode: "cors",
         credentials: "omit",
       });
-      if (response.ok) return await response.blob();
-      lastError = new Error(`HTTP ${response.status}`);
-      // 4xx อื่นนอกจาก 429 (เช่นไฟล์ถูกลบ) ลองใหม่ก็ไม่หาย
-      if (response.status !== 429 && response.status < 500) break;
+      if (response.ok) {
+        const blob = await response.blob();
+        // รูปที่ดาวน์โหลดมาไม่ครบ (ครึ่งล่างเป็นสีดำ/เทา) ให้ถือว่าไม่สำเร็จแล้วลองใหม่
+        const expected = Number(response.headers.get("content-length") || 0);
+        if (blob.size > 0 && (!expected || blob.size >= expected)) return blob;
+        lastError = new Error("รูปดาวน์โหลดไม่ครบ");
+      } else {
+        lastError = new Error(`HTTP ${response.status}`);
+        // 4xx อื่นนอกจาก 429 (เช่นไฟล์ถูกลบ) ลองใหม่ก็ไม่หาย
+        if (response.status !== 429 && response.status < 500) break;
+      }
     } catch (error) {
       lastError = error;
     } finally {
