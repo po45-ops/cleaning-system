@@ -20,7 +20,24 @@ const OWNER_BY_ACCOUNT = new Map(
 const SCHEDULE_STORAGE_KEY = "cleaning_council_schedule_v1";
 
 /** อ่านรายชื่อสมาชิกของบัญชีสภาจากตารางหมุนเวียนที่แก้ล่าสุด */
+const ROSTER_KEY = "cleaning_council_roster_v1";
+
+const readRosterNames = (accountId: string): string[] => {
+  try {
+    const roster = JSON.parse(localStorage.getItem(ROSTER_KEY) || "{}") as Record<
+      string,
+      string[]
+    >;
+    const names = roster?.[accountId];
+    return Array.isArray(names) ? names.filter((n) => String(n).trim()) : [];
+  } catch {
+    return [];
+  }
+};
+
 const readGroupMembers = (accountId: string): string[] => {
+  const fromRoster = readRosterNames(accountId);
+  if (fromRoster.length > 0) return fromRoster;
   try {
     const store = JSON.parse(
       localStorage.getItem(SCHEDULE_STORAGE_KEY) || "{}"
@@ -96,6 +113,69 @@ const revealPasswords = async (): Promise<void> => {
   rerender();
 };
 
+const setRowNote = (row: HTMLElement, text: string, ok: boolean): void => {
+  const note = row.querySelector<HTMLElement>("[data-row-note]");
+  if (!note) return;
+  note.textContent = text;
+  note.className = `mt-1 text-xs ${ok ? "text-emerald-600" : "text-amber-600"}`;
+};
+
+const saveMembers = (accountId: string, row: HTMLElement, raw: string): void => {
+  const names = raw
+    .split(/[,،\n]/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  try {
+    const roster = JSON.parse(localStorage.getItem(ROSTER_KEY) || "{}") as Record<
+      string,
+      string[]
+    >;
+    roster[accountId] = names;
+    localStorage.setItem(ROSTER_KEY, JSON.stringify(roster));
+    window.dispatchEvent(new Event("council-roster-updated"));
+    setRowNote(row, "บันทึกรายชื่อแล้ว (กำลังซิงก์ขึ้นเซิร์ฟเวอร์)", true);
+  } catch {
+    setRowNote(row, "บันทึกรายชื่อไม่สำเร็จ", false);
+  }
+};
+
+const saveServerPassword = async (
+  accountId: string,
+  row: HTMLElement,
+  password: string
+): Promise<boolean> => {
+  if (password.length < 6) {
+    setRowNote(row, "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร", false);
+    return false;
+  }
+  if (!getServerToken()) {
+    setRowNote(row, "ต้องเข้าสู่ระบบแอดมินด้วยรหัสบนเซิร์ฟเวอร์ก่อน (ออกแล้วเข้าใหม่)", false);
+    return false;
+  }
+  try {
+    const response = await fetch(DATA_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({
+        action: "setPassword",
+        role: "student",
+        id: accountId,
+        newPassword: password,
+      }),
+    });
+    const result = (await response.json()) as { status?: string; message?: string };
+    if (result.status === "success") {
+      if (revealedPasswords) revealedPasswords[accountId] = password;
+      setRowNote(row, "ตั้งรหัสใหม่แล้ว ใช้ได้ทุกเครื่อง", true);
+      return true;
+    }
+    setRowNote(row, result.message || "ตั้งรหัสไม่สำเร็จ", false);
+  } catch {
+    setRowNote(row, "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้", false);
+  }
+  return false;
+};
+
 const patchCredentialTable = (): void => {
   const heading = Array.from(
     document.querySelectorAll<HTMLElement>("h1, h2, h3")
@@ -153,36 +233,69 @@ const patchCredentialTable = (): void => {
       ownerCell.dataset.councilOwnerCell = "true";
       ownerCell.className = "p-3 min-w-[300px] text-slate-700";
       row.insertBefore(ownerCell, row.lastElementChild);
+      const targetId = owner?.accountId || accountId;
+      ownerCell.innerHTML =
+        `<div class="font-semibold">${owner ? `กลุ่มที่ ${owner.groupNumber}` : "ไม่ทราบกลุ่ม"}</div>` +
+        '<div class="mt-1 flex gap-1">' +
+        '<input data-members-input type="text" placeholder="ชื่อนักเรียน คั่นด้วยจุลภาค" class="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" />' +
+        '<button data-members-save type="button" class="rounded-lg bg-indigo-600 px-2 py-1 text-xs font-semibold text-white">บันทึกชื่อ</button>' +
+        "</div>";
+      const input = ownerCell.querySelector<HTMLInputElement>("[data-members-input]");
+      input?.addEventListener("input", () => {
+        input.dataset.dirty = "true";
+      });
+      ownerCell
+        .querySelector<HTMLButtonElement>("[data-members-save]")
+        ?.addEventListener("click", () => {
+          if (!input) return;
+          saveMembers(targetId, row, input.value);
+          input.dataset.dirty = "false";
+        });
     }
 
     let pwCell = row.querySelector<HTMLTableCellElement>("[data-council-pw-cell]");
     if (!pwCell) {
       pwCell = document.createElement("td");
       pwCell.dataset.councilPwCell = "true";
-      pwCell.className = "p-3 font-mono text-slate-700";
+      pwCell.className = "p-3 text-slate-700";
+      pwCell.innerHTML =
+        '<div data-pw-text class="font-mono"></div>' +
+        '<div class="mt-1 flex gap-1">' +
+        '<input data-pw-input type="text" autocomplete="off" placeholder="รหัสใหม่" class="w-28 rounded-lg border border-slate-300 px-2 py-1 text-xs" />' +
+        '<button data-pw-save type="button" class="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white">ตั้งรหัส</button>' +
+        "</div>" +
+        '<div data-row-note></div>';
       row.insertBefore(pwCell, row.lastElementChild);
+      const targetId = owner?.accountId || accountId;
+      pwCell
+        .querySelector<HTMLButtonElement>("[data-pw-save]")
+        ?.addEventListener("click", async () => {
+          const input = pwCell!.querySelector<HTMLInputElement>("[data-pw-input]");
+          if (!input) return;
+          if (await saveServerPassword(targetId, row, input.value.trim())) {
+            input.value = "";
+            rerender();
+          }
+        });
     }
     const pwText = revealedPasswords
       ? revealedPasswords[accountId] ||
         revealedPasswords[owner?.accountId || ""] ||
-        "ยังไม่มีรหัสที่บันทึกไว้ (ตั้งรหัสใหม่)"
+        "ยังไม่มีรหัสที่บันทึกไว้"
       : "••••••";
-    if (pwCell.textContent !== pwText) pwCell.textContent = pwText;
+    const pwDisplay = pwCell.querySelector<HTMLElement>("[data-pw-text]");
+    if (pwDisplay && pwDisplay.textContent !== pwText) pwDisplay.textContent = pwText;
 
     const members = owner ? readGroupMembers(owner.accountId) : [];
-    const nextText = owner
-      ? `กลุ่มที่ ${owner.groupNumber}: ${
-          members.length > 0
-            ? members.join(", ")
-            : "ยังไม่ได้ระบุรายชื่อสมาชิก (เพิ่มได้ที่ตารางหมุนเวียนสภา)"
-        }`
-      : "ยังไม่ได้ระบุรายชื่อนักเรียนผู้รับผิดชอบ";
-
-    if (ownerCell.textContent !== nextText) {
-      ownerCell.textContent = nextText;
-      ownerCell.className = owner
-        ? "p-3 min-w-[300px] font-semibold text-slate-700"
-        : "p-3 min-w-[300px] text-sm text-amber-600";
+    const memberInput = ownerCell.querySelector<HTMLInputElement>("[data-members-input]");
+    const memberText = members.join(", ");
+    if (
+      memberInput &&
+      document.activeElement !== memberInput &&
+      memberInput.dataset.dirty !== "true" &&
+      memberInput.value !== memberText
+    ) {
+      memberInput.value = memberText;
     }
   });
 };

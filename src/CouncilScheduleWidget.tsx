@@ -287,6 +287,31 @@ const generateAssignments = (
 const cloneGroups = (groups: CouncilGroup[]): CouncilGroup[] =>
   groups.map((group) => ({ ...group, members: [...group.members] }));
 
+const ROSTER_KEY = "cleaning_council_roster_v1";
+const ROSTER_EVENT = "council-roster-updated";
+
+const readRoster = (): Record<string, string[]> => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ROSTER_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const withRoster = (groups: CouncilGroup[]): CouncilGroup[] => {
+  const roster = readRoster();
+  return groups.map((group) => {
+    const names = roster[group.accountId];
+    return {
+      ...group,
+      members: Array.isArray(names) ? [...names] : [...group.members],
+    };
+  });
+};
+
+const defaultGroups = (): CouncilGroup[] => withRoster(cloneGroups(DEFAULT_GROUPS));
+
 const readStore = (): ScheduleStore => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -424,7 +449,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
       createSchedule(
         now.getFullYear(),
         now.getMonth(),
-        cloneGroups(DEFAULT_GROUPS),
+        defaultGroups(),
         0,
         savedStore
       )
@@ -463,7 +488,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
         createSchedule(
           selectedYear,
           selectedMonth,
-          cloneGroups(DEFAULT_GROUPS),
+          defaultGroups(),
           0,
           freshStore
         )
@@ -511,6 +536,11 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
       updatedAt: new Date().toISOString(),
       groups: cloneGroups(nextSchedule.groups),
     };
+    const rosterFromGroups: Record<string, string[]> = { ...readRoster() };
+    updatedSchedule.groups.forEach((group) => {
+      rosterFromGroups[group.accountId] = group.members;
+    });
+    localStorage.setItem(ROSTER_KEY, JSON.stringify(rosterFromGroups));
     const nextStore = { ...readStore(), [updatedSchedule.key]: updatedSchedule };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextStore));
     setStore(nextStore);
@@ -537,6 +567,27 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
     }
   };
 
+  // หน้าจัดการรหัสผ่านแก้รายชื่อสมาชิก -> นำไปใส่ตารางเดือนที่เปิดอยู่แล้วบันทึก/ซิงก์
+  const scheduleRef = React.useRef(schedule);
+  scheduleRef.current = schedule;
+  const saveRef = React.useRef(saveSchedule);
+  saveRef.current = saveSchedule;
+  useEffect(() => {
+    const onRosterUpdated = () => {
+      const roster = readRoster();
+      const current = scheduleRef.current;
+      const groups = current.groups.map((group) => ({
+        ...group,
+        members: Array.isArray(roster[group.accountId])
+          ? [...roster[group.accountId]]
+          : group.members,
+      }));
+      void saveRef.current({ ...current, groups }, "บันทึกรายชื่อสมาชิกแล้ว");
+    };
+    window.addEventListener(ROSTER_EVENT, onRosterUpdated);
+    return () => window.removeEventListener(ROSTER_EVENT, onRosterUpdated);
+  }, []);
+
   const randomizeSchedule = () => {
     if (!isAdmin) return;
     const nonce = schedule.shuffleNonce + 1;
@@ -560,7 +611,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
     const reset = createSchedule(
       selectedYear,
       selectedMonth,
-      cloneGroups(DEFAULT_GROUPS),
+      defaultGroups(),
       0,
       store
     );
