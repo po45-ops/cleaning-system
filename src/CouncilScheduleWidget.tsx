@@ -447,6 +447,34 @@ const syncScheduleToBackend = async (schedule: MonthlySchedule): Promise<void> =
     );
   }
 };
+/** อ่านตารางเวรล่าสุดจากเซิร์ฟเวอร์ (คืน null ถ้ายังไม่มี/รูปแบบไม่ถูกต้อง) */
+const fetchServerSchedule = async (key: string): Promise<MonthlySchedule | null> => {
+  const response = await fetch(
+    `${SCHEDULE_API_URL}?action=getCouncilSchedule&key=${encodeURIComponent(key)}&refresh=${Date.now()}`,
+    { method: "GET", cache: "no-store" }
+  );
+  const result = (await response.json()) as {
+    status?: string;
+    message?: string;
+    data?: MonthlySchedule | null;
+  };
+  if (!response.ok || result.status !== "success") {
+    throw new Error(result.message || "อ่านตารางเวรจากระบบไม่สำเร็จ");
+  }
+  const data = result.data;
+  if (
+    !data ||
+    data.key !== key ||
+    !Array.isArray(data.weeks) ||
+    !Array.isArray(data.groups) ||
+    !data.assignments ||
+    typeof data.assignments !== "object"
+  ) {
+    return null;
+  }
+  return data;
+};
+
 export default function CouncilScheduleWidget(): React.ReactElement | null {
   const now = new Date();
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => getAuthUser());
@@ -600,6 +628,61 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
     window.addEventListener(ROSTER_EVENT, onRosterUpdated);
     return () => window.removeEventListener(ROSTER_EVENT, onRosterUpdated);
   }, []);
+
+  // ดึงตารางล่าสุดจากเซิร์ฟเวอร์: นักเรียนต้องเห็นตารางที่แอดมินสุ่ม/เผยแพร่ ไม่ใช่ที่สร้างเองในเครื่อง
+  const [isPulling, setIsPulling] = useState(false);
+  const adminRef = React.useRef(isAdmin);
+  adminRef.current = isAdmin;
+  const pullSchedule = React.useCallback(async (year: number, month: number) => {
+    const key = scheduleKey(year, month);
+    let remote: MonthlySchedule | null = null;
+    try {
+      remote = await fetchServerSchedule(key);
+    } catch {
+      return;
+    }
+    if (!remote) return;
+    const fullStore = readStore();
+    const local = fullStore[key];
+    const viewing = scheduleRef.current;
+    if (adminRef.current) {
+      // แอดมิน: รับของเซิร์ฟเวอร์เฉพาะเมื่อใหม่กว่า และไม่มีฉบับแก้ค้างที่ยังไม่บันทึก
+      if (local && remote.updatedAt <= local.updatedAt) return;
+      if (local && viewing.key === key && viewing.updatedAt !== local.updatedAt) return;
+    } else if (
+      local &&
+      local.updatedAt === remote.updatedAt &&
+      local.published === remote.published
+    ) {
+      return;
+    }
+    const nextStore = { ...fullStore, [key]: remote };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextStore));
+    setStore(nextStore);
+    if (viewing.key === key) setSchedule(remote);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen || !authUser) return undefined;
+    let cancelled = false;
+    const run = async () => {
+      await pullSchedule(selectedYear, selectedMonth);
+      if (!cancelled) setIsPulling(false);
+    };
+    setIsPulling(true);
+    void run();
+    if (isAdmin) return () => { cancelled = true; };
+    const intervalId = window.setInterval(() => void run(), 45_000);
+    const onFocus = () => void run();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [isOpen, isAdmin, authUser, selectedYear, selectedMonth, pullSchedule]);
+
+  const studentWaiting = !isAdmin && !schedule.published;
 
   const randomizeSchedule = () => {
     if (!isAdmin) return;
@@ -839,7 +922,15 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
                 </div>
               )}
 
-              {!isAdmin && currentUserGroup && (
+              {studentWaiting && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm font-bold text-amber-800">
+                  {isPulling
+                    ? "กำลังโหลดตารางเวรล่าสุด..."
+                    : "ตารางเวรเดือนนี้ยังไม่เผยแพร่ ให้รอครูแอดมินกดเผยแพร่ก่อน แล้วระบบจะแสดงให้อัตโนมัติ"}
+                </div>
+              )}
+
+              {!isAdmin && !studentWaiting && currentUserGroup && (
                 <section className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 p-4 shadow-sm">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
@@ -868,7 +959,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
                 </section>
               )}
 
-              {!isAdmin && !currentUserGroup && (
+              {!isAdmin && !studentWaiting && !currentUserGroup && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   บัญชี <strong>{authUser.id || "ไม่ระบุ"}</strong> ยังไม่ได้ผูกกับกลุ่มในตาราง
                   กรุณาให้แอดมินแก้ช่อง “บัญชีเข้าสู่ระบบ” ให้ตรงกับบัญชีนี้
@@ -962,6 +1053,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
                 </section>
               )}
 
+              {!studentWaiting && (
               <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
                 <div className="flex flex-col gap-2 border-b px-4 py-3 md:flex-row md:items-center md:justify-between">
                   <div>
@@ -1071,6 +1163,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
                   </table>
                 </div>
               </section>
+              )}
 
               <section className="grid gap-3 md:grid-cols-3">
                 <div className="rounded-xl border bg-white p-4">
