@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getServerToken } from "./server-auth";
+import { DEFAULT_COUNCIL_MEMBERS } from "./council-roster";
 
 type CouncilAccountOwner = {
   accountId: string;
@@ -29,7 +30,9 @@ const readRosterNames = (accountId: string): string[] => {
       string[]
     >;
     const names = roster?.[accountId];
-    return Array.isArray(names) ? names.filter((n) => String(n).trim()) : [];
+    return Array.isArray(names)
+      ? names.filter((n) => String(n).trim())
+      : [...(DEFAULT_COUNCIL_MEMBERS[accountId] || [])];
   } catch {
     return [];
   }

@@ -287,6 +287,8 @@ const generateAssignments = (
 const cloneGroups = (groups: CouncilGroup[]): CouncilGroup[] =>
   groups.map((group) => ({ ...group, members: [...group.members] }));
 
+import { DEFAULT_COUNCIL_MEMBERS } from "./council-roster";
+
 const ROSTER_KEY = "cleaning_council_roster_v1";
 const ROSTER_EVENT = "council-roster-updated";
 
@@ -305,7 +307,9 @@ const withRoster = (groups: CouncilGroup[]): CouncilGroup[] => {
     const names = roster[group.accountId];
     return {
       ...group,
-      members: Array.isArray(names) ? [...names] : [...group.members],
+      members: Array.isArray(names)
+        ? [...names]
+        : [...(DEFAULT_COUNCIL_MEMBERS[group.accountId] || group.members)],
     };
   });
 };
@@ -317,7 +321,16 @@ const readStore = (): ScheduleStore => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return {};
     const parsed = JSON.parse(saved) as ScheduleStore;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    const roster = readRoster();
+    Object.values(parsed).forEach((item) => {
+      item?.groups?.forEach((group) => {
+        if ((group.members || []).length === 0 && !Array.isArray(roster[group.accountId])) {
+          group.members = [...(DEFAULT_COUNCIL_MEMBERS[group.accountId] || [])];
+        }
+      });
+    });
+    return parsed;
   } catch {
     return {};
   }
