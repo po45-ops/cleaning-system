@@ -53,6 +53,11 @@ import {
   LogIn,
 } from "lucide-react";
 import PublicDashboard from "./PublicDashboard";
+import {
+  loadReportImage,
+  MISSING_IMAGE_PLACEHOLDER,
+  type ReportImage,
+} from "./report-images";
 
 type InspectionStatus = "pending" | "approved" | "rejected";
 
@@ -187,7 +192,6 @@ type WordTable = InstanceType<DocxModule["Table"]>;
 const SCRIPT_URL =
   "https://script.google.com/macros/s/AKfycbwfmqSlIqJ0-2CoAQ1Uv7nrL47x3zsqToUWP0brNiHBnJGFIvz450w33ANBmltvOjNPTg/exec";
 const DATA_FETCH_TIMEOUT_MS = 15_000;
-const REPORT_IMAGE_LOAD_TIMEOUT_MS = 8_000;
 const STUDENT_CREDENTIALS_KEY = "cleaning_student_credentials_v3";
 const ADMIN_CREDENTIAL_KEY = "cleaning_admin_credential_v2";
 const MIN_ADMIN_PASSWORD_LENGTH = 6;
@@ -2446,7 +2450,7 @@ function TeacherApproval({
                           className="aspect-square object-cover rounded border"
                           onError={(e) => {
                             e.currentTarget.src =
-                              "https://placehold.co/400x300?text=No+Image";
+                              MISSING_IMAGE_PLACEHOLDER;
                           }}
                         />
                       ))}
@@ -2688,6 +2692,7 @@ function ReportView({
   const [isPrinting, setIsPrinting] = useState(false);
   const [exporting, setExporting] = useState("");
   const [pdfError, setPdfError] = useState("");
+  const [exportNotice, setExportNotice] = useState("");
   const [savingCell, setSavingCell] = useState("");
   const [savedCell, setSavedCell] = useState("");
   const [reportMode, setReportMode] = useState("weekly");
@@ -3105,6 +3110,15 @@ function ReportView({
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // ส่งออก Word (.docx)
+  // ใช้หัวเรื่อง ป้ายชื่อ และผู้ลงนามชุดเดียวกับ PDF เพื่อให้สองไฟล์ตรงกัน
+  // ---------------------------------------------------------------------------
+  const WORD_FONT = "TH Sarabun PSK";
+  // A4 = 11906 x 16838 twips, ขอบ 0.5 นิ้ว (720) ทุกด้าน
+  const WORD_PAGE_MARGIN = 720;
+  const WORD_CONTENT_WIDTH = 11906 - WORD_PAGE_MARGIN * 2;
+
   const createWordCell = (
     docx: DocxModule,
     value: string | number,
@@ -3112,137 +3126,165 @@ function ReportView({
       bold = false,
       fill = "FFFFFF",
       align = docx.AlignmentType.CENTER,
-    }: { bold?: boolean; fill?: string; align?: WordAlignment } = {}
+      width,
+      size = 30,
+      padding = 70,
+      exactLine,
+    }: {
+      bold?: boolean;
+      fill?: string;
+      align?: WordAlignment;
+      width?: number;
+      size?: number;
+      padding?: number;
+      /** ความสูงบรรทัดแบบตายตัว (twips) ใช้กับตารางภาคเรียนให้พอดีหน้าเดียว */
+      exactLine?: number;
+    } = {}
   ) => {
     const {
       BorderStyle,
+      LineRuleType,
       Paragraph,
       ShadingType,
       TableCell,
       TextRun,
       VerticalAlign,
+      WidthType,
     } = docx;
+    const line = { style: BorderStyle.SINGLE, size: 6, color: "000000" };
 
     return new TableCell({
+      width: width ? { size: width, type: WidthType.DXA } : undefined,
       verticalAlign: VerticalAlign.CENTER,
-      margins: { top: 80, bottom: 80, left: 80, right: 80 },
-      shading: { fill, type: ShadingType.CLEAR },
-      borders: {
-        top: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
-        bottom: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
-        left: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
-        right: { style: BorderStyle.SINGLE, size: 4, color: "334155" },
-      },
+      margins: { top: padding, bottom: padding, left: 60, right: 60 },
+      shading: { fill, type: ShadingType.CLEAR, color: "auto" },
+      borders: { top: line, bottom: line, left: line, right: line },
       children: [
         new Paragraph({
           alignment: align,
-          spacing: { before: 0, after: 0 },
+          spacing: exactLine
+            ? { before: 0, after: 0, line: exactLine, lineRule: LineRuleType.EXACT }
+            : { before: 0, after: 0 },
           children: [
-            new TextRun({
-              text: String(value ?? ""),
-              bold,
-              font: "TH Sarabun PSK",
-              size: 30,
-            }),
+            new TextRun({ text: String(value ?? ""), bold, font: WORD_FONT, size }),
           ],
         }),
       ],
     });
   };
 
-  const loadWordImageDimensions = (
-    source: string,
-    { maxWidth, maxHeight }: { maxWidth: number; maxHeight: number }
-  ): Promise<{ width: number; height: number }> =>
-    new Promise((resolve) => {
-      const image = new Image();
-      let resolved = false;
-      const fallback = { width: maxWidth, height: maxHeight };
-      const finish = (dimensions: { width: number; height: number }) => {
-        if (resolved) return;
-        resolved = true;
-        window.clearTimeout(timeoutId);
-        image.onload = null;
-        image.onerror = null;
-        image.src = "";
-        resolve(dimensions);
-      };
-      const timeoutId = window.setTimeout(
-        () => finish(fallback),
-        REPORT_IMAGE_LOAD_TIMEOUT_MS
-      );
-      image.onload = () =>
-        finish({ width: image.naturalWidth, height: image.naturalHeight });
-      image.onerror = () => finish(fallback);
-      image.src = source;
+  const wordText = (
+    docx: DocxModule,
+    text: string,
+    {
+      bold = false,
+      size = 30,
+      align = docx.AlignmentType.CENTER,
+      before = 0,
+      after = 0,
+    }: {
+      bold?: boolean;
+      size?: number;
+      align?: WordAlignment;
+      before?: number;
+      after?: number;
+    } = {}
+  ) =>
+    new docx.Paragraph({
+      alignment: align,
+      spacing: { before, after },
+      children: [new docx.TextRun({ text, bold, font: WORD_FONT, size })],
     });
 
-  const fetchWordImageData = async (source: string): Promise<Uint8Array> => {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(
-      () => controller.abort(),
-      REPORT_IMAGE_LOAD_TIMEOUT_MS
-    );
-    try {
-      const response = await fetch(source, { signal: controller.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return new Uint8Array(await response.arrayBuffer());
-    } finally {
-      window.clearTimeout(timeoutId);
-    }
+  /** ตารางไร้เส้นสำหรับจัดวางช่องลงชื่อ / กล่องสรุปให้ตรงตำแหน่งเหมือน PDF */
+  const createWordLayoutTable = (
+    docx: DocxModule,
+    columns: Array<{ width: number; children: Array<WordParagraph | WordTable> }>
+  ) => {
+    const { BorderStyle, Table, TableCell, TableRow, WidthType, VerticalAlign } = docx;
+    const none = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
+    const noBorders = { top: none, bottom: none, left: none, right: none };
+    return new Table({
+      width: { size: WORD_CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: columns.map((column) => column.width),
+      borders: { ...noBorders, insideHorizontal: none, insideVertical: none },
+      rows: [
+        new TableRow({
+          cantSplit: true,
+          children: columns.map(
+            (column) =>
+              new TableCell({
+                width: { size: column.width, type: WidthType.DXA },
+                verticalAlign: VerticalAlign.BOTTOM,
+                borders: noBorders,
+                children: column.children,
+              })
+          ),
+        }),
+      ],
+    });
   };
 
-  const createWordImageRun = async (
+  const createWordSignature = (docx: DocxModule, name: string, role: string) => [
+    wordText(docx, "ลงชื่อ ........................................", { after: 160 }),
+    wordText(docx, `( ${name || "........................................"} )`, { after: 40 }),
+    wordText(docx, role, { bold: true }),
+  ];
+
+  const getSemesterSummary = () => {
+    const counts = { excellent: 0, good: 0, fair: 0, improve: 0 };
+    ZONES.forEach((zone) => {
+      const total = getZoneTotalSemester(zone.id);
+      const percent = total > 0 ? (total / SEMESTER_MAX_SCORE) * 100 : 0;
+      if (percent >= 80) counts.excellent += 1;
+      else if (percent >= 70) counts.good += 1;
+      else if (percent >= 50) counts.fair += 1;
+      else counts.improve += 1;
+    });
+    const share = (count: number) =>
+      ZONES.length > 0
+        ? ((count / ZONES.length) * 100).toFixed(2).replace(/\.00$/, "")
+        : "0";
+    return [
+      { label: "ดีเยี่ยม (80 - 100%)", count: counts.excellent, share: share(counts.excellent) },
+      { label: "ดี (70 - 79%)", count: counts.good, share: share(counts.good) },
+      { label: "พอใช้ (50 - 69%)", count: counts.fair, share: share(counts.fair) },
+      { label: "ปรับปรุง (ต่ำกว่า 50%)", count: counts.improve, share: share(counts.improve) },
+    ];
+  };
+
+  const SEMESTER_AWARD_NOTE =
+    'รางวัลเกียรติยศ "ธงเขียว" และ "เกียรติบัตร" จะมอบให้แก่ห้องเรียนที่มีผลการประเมินอยู่ในระดับ "ดีเยี่ยม" (หรือมีคะแนนสูงสุดในรอบการประเมิน)';
+
+  const createWordImageRun = (
     docx: DocxModule,
-    source: string,
-    { maxWidth = 155, maxHeight = 110 } = {}
-  ): Promise<WordImageRun | null> => {
-    if (!source) return null;
-    try {
-      const [data, dimensions] = await Promise.all([
-        fetchWordImageData(source),
-        loadWordImageDimensions(source, { maxWidth, maxHeight }),
-      ]);
-      const naturalWidth = Math.max(1, Number(dimensions.width) || maxWidth);
-      const naturalHeight = Math.max(1, Number(dimensions.height) || maxHeight);
-      const scale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight);
-      return new docx.ImageRun({
-        data,
-        transformation: {
-          width: Math.max(1, Math.round(naturalWidth * scale)),
-          height: Math.max(1, Math.round(naturalHeight * scale)),
-        },
-      });
-    } catch (error) {
-      console.warn("Unable to embed report image in Word", error);
-      return null;
-    }
+    image: ReportImage | null,
+    { maxWidth, maxHeight }: { maxWidth: number; maxHeight: number }
+  ): WordImageRun | null => {
+    if (!image) return null;
+    const scale = Math.min(maxWidth / image.width, maxHeight / image.height);
+    return new docx.ImageRun({
+      data: image.bytes,
+      transformation: {
+        width: Math.max(1, Math.round(image.width * scale)),
+        height: Math.max(1, Math.round(image.height * scale)),
+      },
+    });
   };
 
   const createWordPhotoCell = (
     docx: DocxModule,
-    imageRun: WordImageRun | null
+    imageRun: WordImageRun | null,
+    width: number
   ) => {
-    const {
-      AlignmentType,
-      BorderStyle,
-      Paragraph,
-      TableCell,
-      TextRun,
-      VerticalAlign,
-      WidthType,
-    } = docx;
-
+    const { AlignmentType, BorderStyle, Paragraph, TableCell, TextRun, VerticalAlign, WidthType } =
+      docx;
+    const line = { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" };
     return new TableCell({
-      width: { size: 33.33, type: WidthType.PERCENTAGE },
+      width: { size: width, type: WidthType.DXA },
       verticalAlign: VerticalAlign.CENTER,
-      margins: { top: 80, bottom: 80, left: 60, right: 60 },
-      borders: {
-        top: { style: BorderStyle.SINGLE, size: 3, color: "CBD5E1" },
-        bottom: { style: BorderStyle.SINGLE, size: 3, color: "CBD5E1" },
-        left: { style: BorderStyle.SINGLE, size: 3, color: "CBD5E1" },
-        right: { style: BorderStyle.SINGLE, size: 3, color: "CBD5E1" },
-      },
+      margins: { top: 60, bottom: 60, left: 60, right: 60 },
+      borders: { top: line, bottom: line, left: line, right: line },
       children: [
         new Paragraph({
           alignment: AlignmentType.CENTER,
@@ -3254,8 +3296,8 @@ function ReportView({
                   text: "ไม่มีรูปภาพ",
                   italics: true,
                   color: "64748B",
-                  font: "TH Sarabun PSK",
-                  size: 24,
+                  font: WORD_FONT,
+                  size: 26,
                 }),
               ],
         }),
@@ -3265,224 +3307,289 @@ function ReportView({
 
   const exportToWord = async () => {
     setExporting("word");
+    setExportNotice("");
     try {
       const docx = await import("docx");
-      const {
-        AlignmentType,
-        Document,
-        Packer,
-        PageOrientation,
-        Paragraph,
-        Table,
-        TableRow,
-        TextRun,
-        WidthType,
-      } = docx;
-      const title =
-        reportMode === "weekly"
-          ? `ตารางบันทึกการปฏิบัติงานทำความสะอาดเขตพื้นที่รับผิดชอบ\nสัปดาห์ที่ ${selectedReportWeek}`
-          : `แบบสรุปผลการประเมินรายภาคเรียนที่ ${settings.term} ปีการศึกษา ${settings.year}`;
-
-      const headerRow =
-        reportMode === "weekly"
-          ? ["เขตพื้นที่ / ชั้น", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "รวม"]
-          : ["สัปดาห์ที่", ...ZONES.map((zone) => zone.name)];
-      const dataRows: Array<Array<string | number>> =
-        reportMode === "weekly"
-          ? ZONES.map((zone) => {
-              const scores = currentWeekDates.map((date) => {
-                const record = approvedData.find(
-                  (item) =>
-                    Number(item.zoneId) === zone.id &&
-                    formatDateKey(item.date) === date
-                );
-                return record ? Number(record.score) : "-";
-              });
-              const total = scores.reduce<number>(
-                (sum, score) => sum + (score === "-" ? 0 : Number(score)),
-                0
-              );
-              return [
-                `${zone.name} ${zone.fullClass}`,
-                ...scores,
-                scores.some((score) => score !== "-") ? total : "-",
-              ];
-            })
-          : WEEKS.map((week) => [
-              week,
-              ...ZONES.map((zone) => getSemesterScore(week, zone.id) || "-"),
-            ]);
-
-      if (reportMode === "semester") {
-        dataRows.push([
-          "รวมคะแนน",
-          ...ZONES.map((zone) => getZoneTotalSemester(zone.id)),
-        ]);
-        dataRows.push([
-          "คิดเป็น %",
-          ...ZONES.map((zone) =>
-            ((getZoneTotalSemester(zone.id) / SEMESTER_MAX_SCORE) * 100).toFixed(0)
-          ),
-        ]);
-      }
-
-      const reportTable = new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        rows: [
-          new TableRow({
-            tableHeader: true,
-            cantSplit: true,
-            children: headerRow.map((value) =>
-              createWordCell(docx, value, { bold: true, fill: "D1FAE5" })
-            ),
-          }),
-          ...dataRows.map(
-            (row, rowIndex) =>
-              new TableRow({
-                cantSplit: true,
-                children: row.map((value, columnIndex) =>
-                  createWordCell(docx, value, {
-                    bold:
-                      columnIndex === 0 ||
-                      (reportMode === "semester" &&
-                        rowIndex >= dataRows.length - 2),
-                    fill: rowIndex % 2 === 1 ? "F8FAFC" : "FFFFFF",
-                    align: AlignmentType.CENTER,
-                  })
-                ),
-              })
-          ),
-        ],
-      });
+      const { AlignmentType, Document, Packer, Paragraph, Table, TableRow, TextRun, WidthType } =
+        docx;
+      const isWeekly = reportMode === "weekly";
+      let missingImages = 0;
 
       const children: Array<WordParagraph | WordTable> = [];
-      const logoRun = schoolLogo
-        ? await createWordImageRun(docx, schoolLogo, {
-            maxWidth: 85,
-            maxHeight: 85,
-          })
+
+      // --- ส่วนหัว: ตรา + ชื่อรายงาน (ข้อความเดียวกับ PDF) ---
+      const logoImage = schoolLogo
+        ? await loadReportImage(schoolLogo, { keepTransparency: true })
         : null;
+      const logoRun = createWordImageRun(docx, logoImage, {
+        maxWidth: isWeekly ? 90 : 60,
+        maxHeight: isWeekly ? 90 : 60,
+      });
       if (logoRun) {
         children.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
-            spacing: { after: 70 },
+            spacing: { after: 60 },
             children: [logoRun],
           })
         );
       }
+      if (isWeekly) {
+        children.push(
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({ text: "ตารางบันทึกการปฏิบัติงาน", bold: true, font: WORD_FONT, size: 44 }),
+              new TextRun({ text: "ทำความสะอาดเขตพื้นที่รับผิดชอบ", bold: true, font: WORD_FONT, size: 44, break: 1 }),
+            ],
+          }),
+          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 40 }),
+          wordText(
+            docx,
+            `ประจำสัปดาห์ที่ ${selectedReportWeek} (ระหว่างวันที่ ${formatThaiDateShort(
+              currentWeekDates[0]
+            )} – ${formatThaiDateShort(currentWeekDates[4])})`,
+            { bold: true, size: 32, before: 60, after: 200 }
+          )
+        );
+      } else {
+        children.push(
+          wordText(docx, "แบบสรุปผลการประเมินรายภาคเรียน", { bold: true, size: 44 }),
+          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 40 }),
+          wordText(
+            docx,
+            `ประจำภาคเรียนที่ ${settings.term} ปีการศึกษา ${settings.year}`,
+            { size: 32, after: 160 }
+          )
+        );
+      }
+
+      // --- ตารางคะแนน (กำหนดความกว้างคอลัมน์ ไม่ให้ชื่อเขตตกบรรทัด) ---
+      const headerRow = isWeekly
+        ? ["รายการ / เขตพื้นที่", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "รวม"]
+        : ["สัปดาห์ที่", ...ZONES.map((zone) => zone.name)];
+      const columnWidths = isWeekly
+        ? (() => {
+            const day = Math.floor((WORD_CONTENT_WIDTH * 0.08));
+            const total = Math.floor(WORD_CONTENT_WIDTH * 0.12);
+            return [WORD_CONTENT_WIDTH - day * 5 - total, day, day, day, day, day, total];
+          })()
+        : (() => {
+            const zone = Math.floor((WORD_CONTENT_WIDTH * 0.9) / ZONES.length);
+            return [WORD_CONTENT_WIDTH - zone * ZONES.length, ...ZONES.map(() => zone)];
+          })();
+
+      const dataRows: Array<Array<string | number>> = isWeekly
+        ? ZONES.map((zone) => {
+            const scores = currentWeekDates.map((date) => {
+              const record = approvedData.find(
+                (item) => Number(item.zoneId) === zone.id && formatDateKey(item.date) === date
+              );
+              return record ? Number(record.score) : "-";
+            });
+            const total = scores.reduce<number>(
+              (sum, score) => sum + (score === "-" ? 0 : Number(score)),
+              0
+            );
+            return [
+              `${zone.name} ${zone.fullClass}`,
+              ...scores,
+              scores.some((score) => score !== "-") ? total : "-",
+            ];
+          })
+        : WEEKS.map((week) => [
+            week,
+            ...ZONES.map((zone) => getSemesterScore(week, zone.id) || "-"),
+          ]);
+      if (!isWeekly) {
+        dataRows.push(["รวมคะแนน", ...ZONES.map((zone) => getZoneTotalSemester(zone.id))]);
+        dataRows.push([
+          "คิดเป็น %",
+          ...ZONES.map((zone) => {
+            const total = getZoneTotalSemester(zone.id);
+            return total > 0 ? ((total / SEMESTER_MAX_SCORE) * 100).toFixed(0) : "-";
+          }),
+        ]);
+      }
+
+      const cellSize = isWeekly ? 32 : 26;
+      const cellPadding = isWeekly ? 90 : 0;
+      const cellLine = isWeekly ? undefined : 290;
       children.push(
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 80 },
-          children: [
-            new TextRun({
-              text: title,
-              bold: true,
-              font: "TH Sarabun PSK",
-              size: 38,
+        new Table({
+          width: { size: WORD_CONTENT_WIDTH, type: WidthType.DXA },
+          columnWidths,
+          rows: [
+            new TableRow({
+              tableHeader: true,
+              cantSplit: true,
+              children: headerRow.map((value, index) =>
+                createWordCell(docx, value, {
+                  bold: true,
+                  fill: index === headerRow.length - 1 && isWeekly ? "E2E8F0" : "F1F5F9",
+                  width: columnWidths[index],
+                  size: cellSize,
+                  padding: cellPadding,
+                  exactLine: cellLine,
+                })
+              ),
             }),
-          ],
-        }),
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 180 },
-          children: [
-            new TextRun({
-              text: "โรงเรียนไตรธารวิทยา",
-              bold: true,
-              font: "TH Sarabun PSK",
-              size: 32,
-            }),
-          ],
-        }),
-        reportTable,
-        new Paragraph({
-          spacing: { before: 260 },
-          alignment: AlignmentType.CENTER,
-          children: [
-            new TextRun({
-              text:
-                reportMode === "weekly"
-                  ? `ลงชื่อ ................................ ประธานนักเรียน     ลงชื่อ ................................ ครูกิจการนักเรียน     ลงชื่อ ................................ ผู้อำนวยการโรงเรียน`
-                  : `ลงชื่อ ........................................................ (${settings.headStudentAffairs || "ผู้รับผิดชอบ"}) หัวหน้าฝ่ายกิจการและพัฒนานักเรียน`,
-              font: "TH Sarabun PSK",
-              size: 30,
-            }),
+            ...dataRows.map(
+              (row, rowIndex) =>
+                new TableRow({
+                  cantSplit: true,
+                  children: row.map((value, columnIndex) => {
+                    const isSummaryRow = !isWeekly && rowIndex >= dataRows.length - 2;
+                    return createWordCell(docx, value, {
+                      bold:
+                        columnIndex === 0 ||
+                        isSummaryRow ||
+                        (isWeekly && columnIndex === row.length - 1),
+                      fill: isSummaryRow ? "F8FAFC" : "FFFFFF",
+                      width: columnWidths[columnIndex],
+                      size: cellSize,
+                      padding: cellPadding,
+                      exactLine: cellLine,
+                    });
+                  }),
+                })
+            ),
           ],
         })
       );
 
-      if (reportMode === "weekly") {
+      // --- ผู้ลงนาม ---
+      if (isWeekly) {
+        const third = Math.floor(WORD_CONTENT_WIDTH / 3);
+        children.push(
+          wordText(docx, "", { before: 400 }),
+          createWordLayoutTable(docx, [
+            { width: third, children: createWordSignature(docx, settings.president, "ประธานนักเรียน") },
+            { width: third, children: createWordSignature(docx, settings.teacher, "ครูกิจการและพัฒนานักเรียน") },
+            {
+              width: WORD_CONTENT_WIDTH - third * 2,
+              children: createWordSignature(docx, settings.director, "ผู้อำนวยการโรงเรียนไตรธารวิทยา"),
+            },
+          ])
+        );
+      } else {
+        const summary = getSemesterSummary();
+        const boxWidth = Math.floor(WORD_CONTENT_WIDTH * 0.5);
+        const { BorderStyle, TableCell } = docx;
+        const line = { style: BorderStyle.SINGLE, size: 6, color: "000000" };
+        const left = AlignmentType.LEFT;
+        const summaryBox = new Table({
+          width: { size: boxWidth - 200, type: WidthType.DXA },
+          columnWidths: [boxWidth - 200],
+          rows: [
+            new TableRow({
+              cantSplit: true,
+              children: [
+                new TableCell({
+                  borders: { top: line, bottom: line, left: line, right: line },
+                  margins: { top: 100, bottom: 100, left: 140, right: 140 },
+                  children: [
+                    wordText(docx, "สรุปผล:", { bold: true, size: 28, align: left, after: 40 }),
+                    ...summary.map((item) =>
+                      wordText(docx, `${item.label}    ${item.count} ห้อง (${item.share}%)`, {
+                        size: 28,
+                        align: left,
+                      })
+                    ),
+                    wordText(docx, "หมายเหตุ :", { bold: true, size: 28, align: left, before: 80 }),
+                    wordText(docx, SEMESTER_AWARD_NOTE, { size: 26, align: left }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        });
+        children.push(
+          wordText(docx, "", { before: 200 }),
+          createWordLayoutTable(docx, [
+            { width: boxWidth, children: [summaryBox] },
+            {
+              width: WORD_CONTENT_WIDTH - boxWidth,
+              children: createWordSignature(
+                docx,
+                settings.headStudentAffairs,
+                "หัวหน้าฝ่ายกิจการและพัฒนานักเรียน / ผู้รับผิดชอบ"
+              ),
+            },
+          ])
+        );
+      }
+
+      // --- ภาคผนวกรูปถ่าย (รายสัปดาห์) ---
+      if (isWeekly) {
         children.push(
           new Paragraph({
             pageBreakBefore: true,
             spacing: { after: 120 },
             children: [
               new TextRun({
-                text: `รายละเอียดหลักฐาน สัปดาห์ที่ ${selectedReportWeek}`,
+                text: `ภาคผนวก: ภาพถ่ายหลักฐานประกอบการตรวจ (สัปดาห์ที่ ${selectedReportWeek})`,
                 bold: true,
-                font: "TH Sarabun PSK",
-                size: 34,
+                font: WORD_FONT,
+                size: 36,
               }),
             ],
           })
         );
-
         if (!weeklyReportData.length) {
-          children.push(
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [
-                new TextRun({
-                  text: "ไม่มีข้อมูลรูปภาพในสัปดาห์นี้",
-                  font: "TH Sarabun PSK",
-                  size: 30,
-                }),
-              ],
-            })
-          );
+          children.push(wordText(docx, "ไม่มีข้อมูลรูปภาพในสัปดาห์นี้"));
         }
 
-        for (const item of weeklyReportData) {
-          const zone = ZONES.find(
-            (zoneItem) => zoneItem.id === Number(item.zoneId)
-          );
+        // เริ่มโหลดรูปทั้งหมดก่อน (ตัวโหลดคุมจำนวนพร้อมกันเอง) แล้วค่อยประกอบตามลำดับ
+        const photoWidth = Math.floor(WORD_CONTENT_WIDTH / 3);
+        const imageJobs = weeklyReportData.map((item) =>
+          (Array.isArray(item.images) ? item.images.slice(0, 3) : []).map((source) =>
+            loadReportImage(String(source))
+          )
+        );
+        for (const [index, item] of weeklyReportData.entries()) {
+          const zone = ZONES.find((zoneItem) => zoneItem.id === Number(item.zoneId));
           children.push(
             new Paragraph({
               keepNext: true,
-              spacing: { before: 160, after: 70 },
+              keepLines: true,
+              spacing: { before: 160, after: 60 },
               children: [
                 new TextRun({
-                  text:
-                    `${zone ? `${zone.name} - ${zone.class}` : "ไม่ทราบเขต"} ` +
-                    `(วันที่: ${formatThaiDateShort(item.date)})` +
-                    `    คะแนน: ${item.score}/3` +
-                    `    หมายเหตุ: ${item.notes || "-"}`,
+                  text: `${zone ? `${zone.name} - ${zone.class}` : "ไม่ทราบเขต"} (วันที่: ${formatThaiDateShort(
+                    item.date
+                  )})    คะแนน: ${item.score}/3`,
                   bold: true,
-                  font: "TH Sarabun PSK",
-                  size: 28,
+                  font: WORD_FONT,
+                  size: 30,
                 }),
+                ...(item.notes
+                  ? [
+                      new TextRun({
+                        text: `    หมายเหตุ: ${String(item.notes).trim()}`,
+                        font: WORD_FONT,
+                        size: 28,
+                      }),
+                    ]
+                  : []),
               ],
             })
           );
-          const sourceImages: string[] = Array.isArray(item.images)
-            ? item.images.slice(0, 3).map((source: any) => String(source))
-            : [];
-          const imageRuns: Array<WordImageRun | null> = await Promise.all(
-            sourceImages.map((source: string) =>
-              createWordImageRun(docx, source)
-            )
+          const images = await Promise.all(imageJobs[index]);
+          missingImages += images.filter((image) => !image).length;
+          const imageRuns = images.map((image) =>
+            createWordImageRun(docx, image, { maxWidth: 215, maxHeight: 160 })
           );
           while (imageRuns.length < 3) imageRuns.push(null);
           children.push(
             new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
+              width: { size: photoWidth * 3, type: WidthType.DXA },
+              columnWidths: [photoWidth, photoWidth, photoWidth],
               rows: [
                 new TableRow({
                   cantSplit: true,
                   children: imageRuns.map((imageRun) =>
-                    createWordPhotoCell(docx, imageRun)
+                    createWordPhotoCell(docx, imageRun, photoWidth)
                   ),
                 }),
               ],
@@ -3492,21 +3599,19 @@ function ReportView({
       }
 
       const documentFile = new Document({
+        styles: {
+          default: { document: { run: { font: WORD_FONT, size: 30 } } },
+        },
         sections: [
           {
             properties: {
               page: {
-                size: {
-                  orientation:
-                    reportMode === "semester"
-                      ? PageOrientation.LANDSCAPE
-                      : PageOrientation.PORTRAIT,
-                },
+                size: { width: 11906, height: 16838 },
                 margin: {
-                  top: 720,
-                  right: 720,
-                  bottom: 720,
-                  left: 720,
+                  top: WORD_PAGE_MARGIN,
+                  right: WORD_PAGE_MARGIN,
+                  bottom: WORD_PAGE_MARGIN,
+                  left: WORD_PAGE_MARGIN,
                 },
               },
             },
@@ -3516,6 +3621,11 @@ function ReportView({
       });
       const blob = await Packer.toBlob(documentFile);
       downloadBlob(blob, reportFileName("docx"));
+      if (missingImages > 0) {
+        setExportNotice(
+          `สร้างไฟล์ Word แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (แสดงเป็น "ไม่มีรูปภาพ") รอสักครู่แล้วกดส่งออกใหม่ได้`
+        );
+      }
     } catch (error) {
       console.error(error);
       alert("สร้างไฟล์ Word ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
@@ -3528,6 +3638,7 @@ function ReportView({
     const element = document.getElementById("printable-area");
     if (!element) return;
     setPdfError("");
+    setExportNotice("");
     setIsPrinting(true);
     setExporting("pdf");
     let holder: HTMLDivElement | null = null;
@@ -3555,9 +3666,29 @@ function ReportView({
       holder.style.zIndex = "-1000";
       holder.style.pointerEvents = "none";
       holder.style.background = "white";
-      holder.style.width = reportMode === "semester" ? "1122px" : "794px";
+      holder.style.width = "794px";
       holder.appendChild(exportNode);
       document.body.appendChild(holder);
+
+      // แทนรูปทุกใบด้วยข้อมูลที่โหลดไว้แล้ว (คุมการโหลดพร้อมกัน + ลองใหม่เมื่อ Google จำกัด)
+      // ไม่ให้ html2canvas ไปดึงรูปจากเน็ตเองตอนวาด ซึ่งเป็นสาเหตุรูปหาย/ช่องว่างขาว
+      let missingImages = 0;
+      await Promise.all(
+        Array.from(exportNode.querySelectorAll("img")).map(async (img) => {
+          const source = img.getAttribute("src") || "";
+          if (!source || source === MISSING_IMAGE_PLACEHOLDER) return;
+          const isLogo = source === schoolLogo;
+          const loaded = await loadReportImage(source, { keepTransparency: isLogo });
+          if (!loaded && !isLogo) missingImages += 1;
+          img.removeAttribute("srcset");
+          img.setAttribute("src", loaded ? loaded.dataUrl : isLogo ? source : MISSING_IMAGE_PLACEHOLDER);
+          try {
+            await img.decode();
+          } catch {
+            // ปล่อยให้ html2canvas วาดต่อได้
+          }
+        })
+      );
 
       const opt = {
         margin: [8, 8, 8, 8] as [number, number, number, number],
@@ -3571,23 +3702,26 @@ function ReportView({
         html2canvas: {
           scale: 2,
           useCORS: true,
-          allowTaint: true,
+          allowTaint: false,
           backgroundColor: "#ffffff",
           scrollX: 0,
           scrollY: 0,
-          windowWidth: reportMode === "semester" ? 1122 : 794,
+          windowWidth: 794,
         },
         jsPDF: {
           unit: "mm",
           format: "a4",
-          orientation: (reportMode === "semester"
-            ? "landscape"
-            : "portrait") as "landscape" | "portrait",
+          orientation: "portrait" as const,
           compress: true,
         },
       };
 
       await html2pdf().set(opt).from(exportNode).save();
+      if (missingImages > 0) {
+        setExportNotice(
+          `สร้างไฟล์ PDF แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (แสดงเป็น "ไม่มีรูปภาพ") รอสักครู่แล้วกดส่งออกใหม่ได้`
+        );
+      }
     } catch (error) {
       console.error(error);
       // Native alerts block finally, leaving the export controls disabled.
@@ -3681,18 +3815,17 @@ function ReportView({
         }
         .formal-report-table.compact-report-table th,
         .formal-report-table.compact-report-table td {
-          height: 28px;
+          height: 21px;
         }
-        .formal-report-table.compact-report-table .formal-cell-content {
-          min-height: 28px;
-          padding: 2px 4px;
+        .formal-report-table.compact-report-table .formal-cell-content,
+        .formal-report-table.compact-report-table thead .formal-cell-content {
+          min-height: 21px;
+          padding: 0 4px;
         }
         .pdf-export-node { box-sizing: border-box; width: 100%; padding: 24px; background: white; }
         .avoid-break, .photo-record { break-inside: avoid; page-break-inside: avoid; }
         .page-break-before { break-before: page; page-break-before: always; }
-        @page { size: A4 ${
-          reportMode === "semester" ? "landscape" : "portrait"
-        }; margin: 8mm; }
+        @page { size: A4 portrait; margin: 8mm; }
         @media print {
           body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .print-reset { overflow: visible !important; display: block !important; position: static !important; transform: none !important; }
@@ -3767,6 +3900,12 @@ function ReportView({
         </div>
 
         <div className="space-y-5 p-5 md:p-6">
+          {exportNotice && (
+            <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+              <span>{exportNotice}</span>
+              <button type="button" onClick={() => setExportNotice("")} className="text-xs font-bold text-amber-700 hover:underline">ปิด</button>
+            </div>
+          )}
           {pdfError && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
               {pdfError}
@@ -3999,7 +4138,7 @@ function ReportView({
                   alt="ตราโรงเรียน"
                   className={`mx-auto object-contain ${
                     reportMode === "semester"
-                      ? "h-[70px] mb-1"
+                      ? "h-[48px] mb-1"
                       : "h-[90px] mb-3"
                   }`}
                 />
@@ -4023,10 +4162,10 @@ function ReportView({
                 </>
               ) : (
                 <>
-                  <h1 className="text-[22pt] font-bold">
+                  <h1 className="text-[20pt] font-bold leading-tight">
                     แบบสรุปผลการประเมินรายภาคเรียน
                   </h1>
-                  <h2 className="text-[20pt] font-bold mt-1">
+                  <h2 className="text-[18pt] font-bold leading-tight">
                     โรงเรียนไตรธารวิทยา
                   </h2>
                   <p className="mt-1 text-[16pt]">
@@ -4262,7 +4401,7 @@ function ReportView({
                                     className="w-full h-[140px] object-cover rounded-md border border-slate-300"
                                     onError={(e) => {
                                       e.currentTarget.src =
-                                        "https://placehold.co/400x300?text=No+Image";
+                                        MISSING_IMAGE_PLACEHOLDER;
                                     }}
                                   />
                                 </div>
@@ -4358,7 +4497,7 @@ function ReportView({
 
                 <div
                   style={{ pageBreakInside: "avoid" }}
-                  className="avoid-break mt-6 w-full flex justify-between gap-4"
+                  className="avoid-break mt-3 w-full flex justify-between gap-4"
                 >
                   {/* 🚀 กล่องสรุปผล */}
                   <div className="w-[45%] text-[13pt] print:text-[12pt]">
@@ -4378,9 +4517,9 @@ function ReportView({
                       const totalRooms = ZONES.length;
 
                       return (
-                        <div className="border border-black p-3 bg-white">
-                          <p className="font-bold mb-2">สรุปผล:</p>
-                          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 mb-4 ml-2">
+                        <div className="border border-black px-3 py-2 bg-white">
+                          <p className="font-bold mb-1">สรุปผล:</p>
+                          <div className="grid grid-cols-[auto_1fr] gap-x-4 mb-1 ml-2">
                             <div>ดีเยี่ยม (80 - 100%)</div>
                             <div>
                               {ex} ห้อง (
@@ -4425,7 +4564,7 @@ function ReportView({
                               %)
                             </div>
                           </div>
-                          <p className="font-bold mt-2">หมายเหตุ :</p>
+                          <p className="font-bold mt-1">หมายเหตุ :</p>
                           <p className="leading-tight mt-1 ml-2">
                             รางวัลเกียรติยศ "ธงเขียว" และ "เกียรติบัตร"
                             จะมอบให้แก่ห้องเรียนที่มีผลการประเมินอยู่ในระดับ
