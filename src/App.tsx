@@ -2231,12 +2231,12 @@ function InspectionCalendar({
 
           {selectedInfo.isWeekend ? (
             <div className="p-8 text-center text-slate-500">
-              <Clock className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+              <img src="/cleaning-system/img/empty-weekend.webp" alt="" aria-hidden="true" width={200} height={200} className="w-36 h-36 mx-auto mb-2 object-contain rounded-2xl" />
               <p className="font-bold">วันเสาร์–อาทิตย์เป็นวันหยุด</p>
             </div>
           ) : selectedInfo.isFuture ? (
             <div className="p-8 text-center text-slate-500">
-              <CalendarDays className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+              <img src="/cleaning-system/img/empty-future.webp" alt="" aria-hidden="true" width={200} height={200} className="w-36 h-36 mx-auto mb-2 object-contain rounded-2xl" />
               <p className="font-bold">ยังไม่ถึงกำหนดตรวจ</p>
             </div>
           ) : (
@@ -2384,7 +2384,7 @@ function TeacherApproval({
               aria-hidden="true"
               width={240}
               height={240}
-              className="w-32 h-32 sm:w-40 sm:h-40 mx-auto mb-2 object-contain"
+              className="w-32 h-32 sm:w-40 sm:h-40 mx-auto mb-2 object-contain rounded-2xl"
             />
             <p>ไม่มีรายการที่รอการอนุมัติ</p>
           </div>
@@ -2506,7 +2506,10 @@ function TeacherApproval({
         </h2>
         <div className="space-y-3">
           {history.length === 0 ? (
-            <p className="text-sm text-slate-400">ยังไม่มีประวัติ</p>
+            <div className="text-center py-2">
+              <img src="/cleaning-system/img/empty-history.webp" alt="" aria-hidden="true" width={200} height={200} className="w-28 h-28 mx-auto mb-1 object-contain rounded-2xl" />
+              <p className="text-sm text-slate-400">ยังไม่มีประวัติ</p>
+            </div>
           ) : (
             history.map((item) => (
               <div

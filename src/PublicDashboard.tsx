@@ -415,7 +415,7 @@ export default function PublicDashboard({
               </span>
             </div>
 
-            <div className="mx-auto grid max-w-2xl grid-cols-3 gap-2.5 sm:gap-4">
+            <div className="mx-auto grid max-w-md grid-cols-3 gap-2.5 sm:gap-4 lg:max-w-none lg:grid-cols-9 lg:gap-3">
               {dashboard.zoneSummaries.map((zone) => {
                 const meta = stateMeta[zone.state];
                 const hasNote = Boolean(zone.record?.notes?.trim());
