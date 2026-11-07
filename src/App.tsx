@@ -2955,8 +2955,8 @@ function ReportView({
   // ---- แยกภาคเรียน 1 / 2 อัตโนมัติ: สัปดาห์แรก = สัปดาห์แรกที่มีการตรวจของภาคเรียนนั้น ----
   const termStartFromData = (() => {
     const ce = Number(settings.year) - 543;
-    const from = settings.term === "1" ? `${ce}-05-01` : `${ce}-10-16`;
-    const to = settings.term === "1" ? `${ce}-10-15` : `${ce + 1}-04-30`;
+    const from = settings.term === "1" ? `${ce}-05-01` : `${ce}-10-19`;
+    const to = settings.term === "1" ? `${ce}-10-18` : `${ce + 1}-04-30`;
     const keys = inspections
       .map((item) => formatDateKey(item.date))
       .filter((key) => key >= from && key <= to)
@@ -2974,7 +2974,7 @@ function ReportView({
   // แสดงเฉพาะสัปดาห์ที่มีการตรวจ (ข้ามสัปดาห์ที่เว้น)
   const availableWeeks = (() => {
     const ce = Number(settings.year) - 543;
-    const termTo = settings.term === "1" ? `${ce}-10-15` : `${ce + 1}-04-30`;
+    const termTo = settings.term === "1" ? `${ce}-10-18` : `${ce + 1}-04-30`;
     const keys = new Set(
       inspections.map((item) => formatDateKey(item.date)).filter((key) => key <= termTo)
     );
