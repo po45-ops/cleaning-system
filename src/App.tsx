@@ -4166,7 +4166,7 @@ function ReportView({
             <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 sm:w-auto">
               <button
                 onClick={() => setReportMode("weekly")}
-                className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 sm:px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
                   reportMode === "weekly"
                     ? "bg-white text-emerald-700 shadow-sm"
                     : "text-slate-500 hover:text-slate-800"
@@ -4176,7 +4176,7 @@ function ReportView({
               </button>
               <button
                 onClick={() => setReportMode("semester")}
-                className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 sm:px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
                   reportMode === "semester"
                     ? "bg-white text-emerald-700 shadow-sm"
                     : "text-slate-500 hover:text-slate-800"
@@ -4192,7 +4192,7 @@ function ReportView({
                   key={term}
                   type="button"
                   onClick={() => setSettings({ ...settings, term })}
-                  className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
+                  className={`flex-1 rounded-lg px-2 sm:px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
                     settings.term === term
                       ? "bg-white text-emerald-700 shadow-sm"
                       : "text-slate-500 hover:text-slate-800"
@@ -4201,6 +4201,17 @@ function ReportView({
                   ภาคเรียนที่ {term}
                 </button>
               ))}
+              <label className="ml-1 flex flex-1 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-white shadow-sm sm:flex-none">
+                <span className="whitespace-nowrap text-[11px] font-bold opacity-90 sm:text-xs">ปีการศึกษา</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  aria-label="ปีการศึกษา"
+                  value={settings.year}
+                  onChange={(event) => setSettings({ ...settings, year: event.target.value })}
+                  className="w-14 sm:w-16 rounded-md bg-white/95 px-1.5 py-0.5 text-center text-sm font-extrabold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-200 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                />
+              </label>
             </div>
 
             {reportMode === "weekly" && (
@@ -4264,18 +4275,6 @@ function ReportView({
                     </button>
                   )}
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <label className="col-span-2 md:col-span-1">
-                  <span className="mb-1 block text-xs font-bold text-slate-600">ปีการศึกษา</span>
-                  <input
-                    type="number"
-                    value={settings.year}
-                    onChange={(event) => setSettings({ ...settings, year: event.target.value })}
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500"
-                  />
-                </label>
               </div>
 
               <div className="grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 md:grid-cols-3">
