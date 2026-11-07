@@ -551,6 +551,14 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
     [schedule.weeks]
   );
 
+  const [weekIdx, setWeekIdx] = useState(0);
+  useEffect(() => {
+    const idx = currentWeek
+      ? schedule.weeks.findIndex((week) => week.id === currentWeek.id)
+      : -1;
+    setWeekIdx(idx >= 0 ? idx : 0);
+  }, [currentWeek, schedule.weeks]);
+
   const currentAssignment =
     currentWeek && currentUserGroup
       ? schedule.assignments[currentWeek.id]?.[currentUserGroup.id]
@@ -793,7 +801,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-lg font-black text-slate-900 md:text-2xl">
-                    ระบบจัดเวรสภานักเรียนตรวจความสะอาด
+                    ตารางจัดเวรตรวจ
                   </h2>
                   <span
                     className={`rounded-full px-2.5 py-1 text-xs font-bold ${
@@ -805,9 +813,6 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
                     {isAdmin ? "แอดมินแก้ไขได้" : "สภานักเรียนดูอย่างเดียว"}
                   </span>
                 </div>
-                <p className="mt-1 text-sm text-slate-500">
-                  หมุนเวียนผู้ตรวจแบบสมดุล ไม่ให้กลุ่มเดิมตรวจเขตเดิมซ้ำติดต่อกัน
-                </p>
               </div>
               <button
                 type="button"
@@ -1058,9 +1063,6 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
                 <div className="flex flex-col gap-2 border-b px-4 py-3 md:flex-row md:items-center md:justify-between">
                   <div>
                     <h3 className="font-black text-slate-900">ตารางหมุนเวียนประจำเดือน</h3>
-                    <p className="text-xs text-slate-500">
-                      ทุกสัปดาห์ใช้ครบ 9 เขต และแต่ละกลุ่มไม่ตรวจเขตซ้ำภายในเดือนเดียวกัน
-                    </p>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-slate-500">
                     <RefreshCw className="h-3.5 w-3.5" />
@@ -1068,7 +1070,91 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
+                <div className="md:hidden">
+                  <div className="flex gap-2 overflow-x-auto px-3 pb-1 pt-3">
+                    {schedule.weeks.map((week, index) => (
+                      <button
+                        key={week.id}
+                        type="button"
+                        onClick={() => setWeekIdx(index)}
+                        className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold transition ${
+                          weekIdx === index
+                            ? "bg-indigo-600 text-white shadow"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {week.label}
+                      </button>
+                    ))}
+                  </div>
+                  {schedule.weeks[weekIdx] && (
+                    <>
+                      <p className="px-4 pb-2 pt-1 text-xs font-semibold text-slate-500">
+                        {formatThaiDate(schedule.weeks[weekIdx].start)} – {formatThaiDate(schedule.weeks[weekIdx].end)}
+                      </p>
+                      <div className="space-y-2 px-3 pb-3">
+                        {[...schedule.groups]
+                          .sort(
+                            (a, b) =>
+                              Number(currentUserGroup?.id === b.id) -
+                              Number(currentUserGroup?.id === a.id)
+                          )
+                          .map((group) => {
+                            const isOwnGroup = currentUserGroup?.id === group.id;
+                            const week = schedule.weeks[weekIdx];
+                            const assignedZone = schedule.assignments[week.id]?.[group.id];
+                            return (
+                              <div
+                                key={group.id}
+                                className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${
+                                  isOwnGroup
+                                    ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"
+                                    : "border-slate-200 bg-white"
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <p className="font-black text-slate-900">
+                                    กลุ่ม {group.homeClass}
+                                    {isOwnGroup && (
+                                      <span className="ml-2 rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] text-white">
+                                        กลุ่มของคุณ
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className="truncate text-xs text-slate-500">
+                                    {group.members.length > 0
+                                      ? group.members.join(" • ")
+                                      : "ยังไม่มีรายชื่อสมาชิก"}
+                                  </p>
+                                </div>
+                                {isAdmin ? (
+                                  <select
+                                    value={assignedZone || ""}
+                                    onChange={(event) =>
+                                      changeAssignment(week.id, group.id, Number(event.target.value))
+                                    }
+                                    className="shrink-0 rounded-lg border bg-white px-2 py-2 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400"
+                                  >
+                                    {ZONES.map((zone) => (
+                                      <option key={zone.id} value={zone.id}>
+                                        {zone.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="shrink-0 rounded-lg bg-emerald-100 px-3 py-1.5 text-sm font-black text-emerald-800">
+                                    {zoneLabel(assignedZone)}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="hidden overflow-x-auto md:block">
                   <table className="min-w-[1050px] w-full border-collapse text-sm">
                     <thead>
                       <tr className="bg-slate-100 text-slate-700">
@@ -1165,26 +1251,6 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
               </section>
               )}
 
-              <section className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-xl border bg-white p-4">
-                  <div className="text-sm font-black text-slate-900">หลักความยุติธรรม</div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                    แต่ละสัปดาห์ทุกเขตมีผู้ตรวจเพียงหนึ่งกลุ่ม และผู้ตรวจจะหมุนเวียนไปยังเขตใหม่
-                  </p>
-                </div>
-                <div className="rounded-xl border bg-white p-4">
-                  <div className="text-sm font-black text-slate-900">การแก้ตาราง</div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                    เมื่อแอดมินเลือกเขตที่มีคนตรวจอยู่แล้ว ระบบจะสลับสองกลุ่มให้อัตโนมัติ ไม่ทำให้เขตซ้ำ
-                  </p>
-                </div>
-                <div className="rounded-xl border bg-white p-4">
-                  <div className="text-sm font-black text-slate-900">สิทธิ์การใช้งาน</div>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                    แอดมินสุ่ม แก้ไข บันทึก และเผยแพร่ได้ ส่วนบัญชีสภานักเรียนเปิดดูได้อย่างเดียว
-                  </p>
-                </div>
-              </section>
             </main>
           </div>
         </div>

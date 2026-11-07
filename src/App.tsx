@@ -1056,15 +1056,15 @@ export default function App() {
                 </label>
               )}
             </div>
-            <div className="min-w-0 pr-14 sm:pr-0">
-              <h1 className="text-[15px] sm:text-base md:text-xl font-bold leading-tight drop-shadow-sm">
+            <div className="min-w-0 pr-14 sm:pr-0 md:shrink-0">
+              <h1 className="text-[15px] sm:text-base md:text-base lg:text-xl font-bold md:whitespace-nowrap leading-tight drop-shadow-sm">
                 ระบบตรวจเวรทำความสะอาด
               </h1>
               <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-                <p className="text-emerald-100 text-xs md:text-sm">
+                <p className="text-emerald-100 text-xs md:text-sm md:whitespace-nowrap">
                   โรงเรียนไตรธารวิทยา
                 </p>
-                <span className="bg-emerald-800/80 text-emerald-50 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/50 whitespace-nowrap shadow-sm">
+                <span className="hidden lg:inline-block bg-emerald-800/80 text-emerald-50 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/50 whitespace-nowrap shadow-sm">
                   {user.role === "admin"
                     ? "โหมดครู/แอดมิน"
                     : `สภานักเรียน: ${user.id}`}
@@ -1077,7 +1077,7 @@ export default function App() {
             <div className="hidden md:flex bg-emerald-700/40 p-1 rounded-xl items-center gap-1 border border-emerald-500/30">
               <button
                 onClick={() => setActiveTab("overview")}
-                className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
+                className={`px-2 lg:px-3 py-2 flex items-center gap-1.5 lg:gap-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
                   activeTab === "overview"
                     ? "bg-white text-emerald-700 shadow-sm"
                     : "text-emerald-50 hover:bg-emerald-600/60"
@@ -1088,7 +1088,7 @@ export default function App() {
 
               <button
                 onClick={() => setActiveTab("student")}
-                className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
+                className={`px-2 lg:px-3 py-2 flex items-center gap-1.5 lg:gap-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
                   activeTab === "student"
                     ? "bg-white text-emerald-700 shadow-sm"
                     : "text-emerald-50 hover:bg-emerald-600/60"
@@ -1099,7 +1099,7 @@ export default function App() {
 
               <button
                 onClick={() => setActiveTab("teacher")}
-                className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
+                className={`px-2 lg:px-3 py-2 flex items-center gap-1.5 lg:gap-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
                   activeTab === "teacher"
                     ? "bg-white text-emerald-700 shadow-sm"
                     : "text-emerald-50 hover:bg-emerald-600/60"
@@ -1111,7 +1111,7 @@ export default function App() {
 
               <button
                 onClick={() => setActiveTab("calendar")}
-                className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
+                className={`px-2 lg:px-3 py-2 flex items-center gap-1.5 lg:gap-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
                   activeTab === "calendar"
                     ? "bg-white text-emerald-700 shadow-sm"
                     : "text-emerald-50 hover:bg-emerald-600/60"
@@ -1124,7 +1124,7 @@ export default function App() {
                 <>
                   <button
                     onClick={() => setActiveTab("report")}
-                    className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
+                    className={`px-2 lg:px-3 py-2 flex items-center gap-1.5 lg:gap-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
                       activeTab === "report"
                         ? "bg-white text-emerald-700 shadow-sm"
                         : "text-emerald-50 hover:bg-emerald-600/60"
@@ -1134,7 +1134,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setActiveTab("users")}
-                    className={`px-3 py-2 flex items-center gap-2 rounded-lg text-sm font-bold transition-all ${
+                    className={`px-2 lg:px-3 py-2 flex items-center gap-1.5 lg:gap-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
                       activeTab === "users"
                         ? "bg-white text-emerald-700 shadow-sm"
                         : "text-emerald-50 hover:bg-emerald-600/60"
@@ -1151,7 +1151,7 @@ export default function App() {
               className="bg-emerald-700 hover:bg-red-500 text-white p-2 md:px-4 md:py-2 rounded-xl transition-all flex items-center gap-2 text-sm font-bold border border-emerald-600 hover:border-red-500 shadow-sm"
             >
               <LogOut className="w-4 h-4" />
-              <span className="hidden md:inline">ออกจากระบบ</span>
+              <span className="hidden lg:inline">ออกจากระบบ</span>
             </button>
           </div>
         </div>
@@ -1895,6 +1895,7 @@ function InspectionCalendar({
     new Date(now.getFullYear(), now.getMonth(), 1)
   );
   const [selectedDate, setSelectedDate] = useState(todayKey);
+  const [dateSheetOpen, setDateSheetOpen] = useState(false);
 
   const recordsByDate = inspections.reduce<Record<string, InspectionRecord[]>>(
     (acc, item) => {
@@ -2025,51 +2026,35 @@ function InspectionCalendar({
   return (
     <div className="space-y-5">
       <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-600 to-teal-700 text-white shadow-lg">
-        <div className="p-5 md:p-7">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-11 h-11 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center">
-                  <CalendarDays className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold">ปฏิทินการตรวจเวร</h2>
-                </div>
+        <div className="p-4 md:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center">
+                <CalendarDays className="w-5 h-5" />
               </div>
+              <h2 className="text-lg md:text-2xl font-bold">ปฏิทินการตรวจเวร</h2>
             </div>
-            <div className="self-start md:self-auto rounded-full bg-white/15 border border-white/20 px-4 py-2 text-sm font-bold">
-              ตรวจเฉพาะวันจันทร์–วันศุกร์
+            <div className="hidden sm:block rounded-full bg-white/15 border border-white/20 px-4 py-1.5 text-sm font-bold">
+              จันทร์–ศุกร์
             </div>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
-            <div className="rounded-xl bg-white/12 border border-white/15 p-4">
-              <p className="text-xs text-emerald-100">ตรวจครบทุกเขต</p>
-              <p className="text-2xl font-bold mt-1">
-                {monthSummary.complete} วัน
-              </p>
+          <div className="grid grid-cols-4 gap-2 mt-3 md:mt-4 text-center">
+            <div className="rounded-xl bg-white/12 border border-white/15 py-2">
+              <p className="text-lg md:text-2xl font-bold leading-tight">{monthSummary.complete}</p>
+              <p className="text-[11px] md:text-xs text-emerald-100">ครบ</p>
             </div>
-            <div className="rounded-xl bg-white/12 border border-white/15 p-4">
-              <p className="text-xs text-emerald-100">ตรวจบางส่วน</p>
-              <p className="text-2xl font-bold mt-1">
-                {monthSummary.partial} วัน
-              </p>
+            <div className="rounded-xl bg-white/12 border border-white/15 py-2">
+              <p className="text-lg md:text-2xl font-bold leading-tight">{monthSummary.partial}</p>
+              <p className="text-[11px] md:text-xs text-emerald-100">บางส่วน</p>
             </div>
-            <div className="rounded-xl bg-white/12 border border-white/15 p-4">
-              <p className="text-xs text-emerald-100">ยังไม่ได้ตรวจ</p>
-              <p className="text-2xl font-bold mt-1">
-                {monthSummary.missing} วัน
-              </p>
+            <div className="rounded-xl bg-white/12 border border-white/15 py-2">
+              <p className="text-lg md:text-2xl font-bold leading-tight">{monthSummary.missing}</p>
+              <p className="text-[11px] md:text-xs text-emerald-100">ไม่ได้ตรวจ</p>
             </div>
-            <div className="rounded-xl bg-white text-emerald-700 p-4 shadow-sm">
-              <p className="text-xs text-emerald-600">ความครอบคลุมรายเดือน</p>
-              <div className="flex items-end justify-between gap-3 mt-1">
-                <p className="text-2xl font-bold">{coveragePercent}%</p>
-                <p className="text-[10px] text-slate-500 text-right">
-                  {monthSummary.checkedZones}/
-                  {monthSummary.scheduled * ZONES.length} เขต
-                </p>
-              </div>
+            <div className="rounded-xl bg-white text-emerald-700 py-2 shadow-sm">
+              <p className="text-lg md:text-2xl font-bold leading-tight">{coveragePercent}%</p>
+              <p className="text-[11px] md:text-xs text-emerald-600">ครอบคลุม</p>
             </div>
           </div>
         </div>
@@ -2132,7 +2117,7 @@ function InspectionCalendar({
                   return (
                     <div
                       key={`empty-${index}`}
-                      className="min-h-[72px] sm:min-h-[104px]"
+                      className="min-h-[52px] sm:min-h-[104px]"
                     />
                   );
 
@@ -2152,8 +2137,11 @@ function InspectionCalendar({
                   <button
                     type="button"
                     key={info.key}
-                    onClick={() => setSelectedDate(info.key)}
-                    className={`relative min-h-[72px] sm:min-h-[104px] rounded-xl border p-1.5 sm:p-2 text-left transition-all ${
+                    onClick={() => {
+                      setSelectedDate(info.key);
+                      setDateSheetOpen(true);
+                    }}
+                    className={`relative min-h-[52px] sm:min-h-[104px] rounded-xl border p-1 sm:p-2 text-left transition-all ${
                       style.cell
                     } ${
                       isSelected
@@ -2161,7 +2149,7 @@ function InspectionCalendar({
                         : ""
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-1">
+                    <div className="flex items-start justify-center sm:justify-between gap-1">
                       <span
                         className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${
                           isToday
@@ -2176,7 +2164,10 @@ function InspectionCalendar({
                       )}
                     </div>
                     <span
-                      className={`absolute left-1.5 right-1.5 bottom-1.5 rounded-md px-1 py-1 text-[9px] sm:text-[11px] text-center font-bold truncate ${style.badge}`}
+                      className={`absolute left-1/2 -translate-x-1/2 bottom-1.5 h-1.5 w-1.5 rounded-full sm:hidden ${style.badge}`}
+                    />
+                    <span
+                      className={`hidden sm:block absolute left-1.5 right-1.5 bottom-1.5 rounded-md px-1 py-1 text-[11px] text-center font-bold truncate ${style.badge}`}
                     >
                       {cellLabel}
                     </span>
@@ -2185,25 +2176,46 @@ function InspectionCalendar({
               })}
             </div>
 
-            <div className="flex flex-wrap gap-x-4 gap-y-2 mt-4 pt-4 border-t text-xs text-slate-600">
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-emerald-500" /> ตรวจครบ
+            <div className="flex flex-nowrap items-center justify-between sm:justify-start sm:gap-x-4 whitespace-nowrap mt-3 pt-3 border-t text-[10px] min-[360px]:text-[11px] sm:text-xs text-slate-600">
+              <span className="flex items-center gap-1 sm:gap-1.5">
+                <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-emerald-500" /> ตรวจครบ
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-amber-400" /> ตรวจบางส่วน
+              <span className="flex items-center gap-1 sm:gap-1.5">
+                <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-amber-400" /> ตรวจบางส่วน
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-red-400" /> ยังไม่ได้ตรวจ
+              <span className="flex items-center gap-1 sm:gap-1.5">
+                <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-red-400" /> ยังไม่ได้ตรวจ
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-slate-300" /> วันหยุด/วันในอนาคต
+              <span className="flex items-center gap-1 sm:gap-1.5">
+                <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-slate-300" /> วันหยุด/อนาคต
               </span>
             </div>
           </div>
         </section>
 
-        <aside className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden xl:sticky xl:top-24">
-          <div className="p-5 border-b border-slate-200">
+        {dateSheetOpen && (
+          <div
+            className="fixed inset-0 z-[75] bg-slate-900/50 xl:hidden"
+            onClick={() => setDateSheetOpen(false)}
+            role="presentation"
+          />
+        )}
+        <aside
+          className={`bg-white overflow-hidden xl:rounded-2xl xl:border xl:border-slate-200 xl:shadow-sm xl:sticky xl:top-24 xl:block ${
+            dateSheetOpen
+              ? "fixed inset-x-0 bottom-0 z-[80] max-h-[75vh] overflow-y-auto rounded-t-3xl shadow-2xl xl:static xl:max-h-none xl:z-auto xl:overflow-hidden"
+              : "hidden"
+          }`}
+        >
+          <div className="p-5 border-b border-slate-200 relative">
+            <button
+              type="button"
+              aria-label="ปิด"
+              onClick={() => setDateSheetOpen(false)}
+              className="xl:hidden absolute right-3 top-3 rounded-full bg-slate-100 p-2 text-slate-500"
+            >
+              ✕
+            </button>
             <p className="text-xs font-bold text-emerald-600 mb-1">
               รายละเอียดประจำวันที่เลือก
             </p>
