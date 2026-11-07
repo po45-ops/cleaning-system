@@ -3262,7 +3262,7 @@ function ReportView({
   // ส่งออก Word (.docx)
   // ใช้หัวเรื่อง ป้ายชื่อ และผู้ลงนามชุดเดียวกับ PDF เพื่อให้สองไฟล์ตรงกัน
   // ---------------------------------------------------------------------------
-  const WORD_FONT = "TH Sarabun PSK";
+  const WORD_FONT = "Tahoma";
   // A4 = 11906 x 16838 twips, ขอบ 0.5 นิ้ว (720) ทุกด้าน
   const WORD_PAGE_MARGIN = 720;
   const WORD_CONTENT_WIDTH = 11906 - WORD_PAGE_MARGIN * 2;
@@ -3374,9 +3374,9 @@ function ReportView({
   };
 
   const createWordSignature = (docx: DocxModule, name: string, role: string) => [
-    wordText(docx, "ลงชื่อ ........................................", { after: 160 }),
-    wordText(docx, `( ${name || "........................................"} )`, { after: 40 }),
-    wordText(docx, role, { bold: true }),
+    wordText(docx, "ลงชื่อ ..............................", { size: 24, after: 320 }),
+    wordText(docx, `( ${name || "........................................"} )`, { size: 24, after: 80 }),
+    wordText(docx, role, { bold: true, size: 24 }),
   ];
 
   const getSemesterSummary = () => {
@@ -3487,17 +3487,17 @@ function ReportView({
           new Paragraph({
             alignment: AlignmentType.CENTER,
             children: [
-              new TextRun({ text: "ตารางบันทึกการปฏิบัติงาน", bold: true, font: WORD_FONT, size: 44 }),
-              new TextRun({ text: "ทำความสะอาดเขตพื้นที่รับผิดชอบ", bold: true, font: WORD_FONT, size: 44, break: 1 }),
+              new TextRun({ text: "ตารางบันทึกการปฏิบัติงาน", bold: true, font: WORD_FONT, size: 36 }),
+              new TextRun({ text: "ทำความสะอาดเขตพื้นที่รับผิดชอบ", bold: true, font: WORD_FONT, size: 36, break: 1 }),
             ],
           }),
-          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 40 }),
+          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 32, before: 80 }),
           wordText(
             docx,
             `ประจำสัปดาห์ที่ ${selectedReportWeek} (ระหว่างวันที่ ${formatThaiDateShort(
               currentWeekDates[0]
             )} – ${formatThaiDateShort(currentWeekDates[4])})`,
-            { bold: true, size: 32, before: 60, after: 200 }
+            { bold: true, size: 26, before: 120, after: 320 }
           )
         );
       } else {
@@ -3560,8 +3560,9 @@ function ReportView({
         ]);
       }
 
-      const cellSize = isWeekly ? 32 : 26;
-      const cellPadding = isWeekly ? 90 : 0;
+      const cellSize = isWeekly ? 26 : 26;
+      const cellPadding = isWeekly ? 110 : 0;
+      const rowHeight = isWeekly ? { value: 700, rule: docx.HeightRule.ATLEAST } : undefined;
       const cellLine = isWeekly ? undefined : 290;
       children.push(
         new Table({
@@ -3571,6 +3572,7 @@ function ReportView({
             new TableRow({
               tableHeader: true,
               cantSplit: true,
+              height: rowHeight,
               children: headerRow.map((value, index) =>
                 createWordCell(docx, value, {
                   bold: true,
@@ -3586,6 +3588,7 @@ function ReportView({
               (row, rowIndex) =>
                 new TableRow({
                   cantSplit: true,
+                  height: rowHeight,
                   children: row.map((value, columnIndex) => {
                     const isSummaryRow = !isWeekly && rowIndex >= dataRows.length - 2;
                     return createWordCell(docx, value, {
@@ -3610,7 +3613,7 @@ function ReportView({
       if (isWeekly) {
         const third = Math.floor(WORD_CONTENT_WIDTH / 3);
         children.push(
-          wordText(docx, "", { before: 400 }),
+          wordText(docx, "", { before: 600 }),
           createWordLayoutTable(docx, [
             { width: third, children: createWordSignature(docx, settings.president, "ประธานนักเรียน") },
             { width: third, children: createWordSignature(docx, settings.teacher, "ครูกิจการและพัฒนานักเรียน") },
@@ -3846,6 +3849,10 @@ function ReportView({
       exportNode
         .querySelectorAll(".screen-only")
         .forEach((node) => node.remove());
+      // PDF ใช้พื้นขาวทั้งหมด ไม่เอาสีเขียว/เหลือง/แดงของช่องกรอกคะแนน
+      exportNode.querySelectorAll("td").forEach((cell) => {
+        cell.className = cell.className.replace(/\bbg-\S+/g, "bg-white");
+      });
       exportNode.querySelectorAll(".print-only").forEach((node) => {
         node.classList.remove("hidden", "print:block", "print:inline");
       });
@@ -4023,6 +4030,7 @@ function ReportView({
           .screen-only { display: none !important; }
           .print-only { display: inline !important; }
           table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
+          .formal-report-table td { background: #fff !important; }
           .paper-scale-outer { width: 100% !important; height: auto !important; }
           .paper-scale-inner { transform: none !important; width: 100% !important; }
           thead { display: table-header-group; }
