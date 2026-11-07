@@ -9,6 +9,7 @@ import {
   getLocalWeekday,
   parseLocalDate,
 } from "./date-utils";
+import { fetchReportConfig, saveReportConfig } from "./report-config-sync";
 import {
   AUTH_EXPIRED_EVENT,
   clearServerSession,
@@ -2825,6 +2826,104 @@ function ReportView({
     localStorage.setItem("cleaning_report_settings", JSON.stringify(settings));
   }, [settings]);
 
+  // ---- ซิงก์ตั้งค่ารายงาน + ตราโรงเรียนกับระบบกลาง ----
+  const CONFIG_TS_KEY = "cleaning_report_config_ts";
+  const [syncState, setSyncState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const configReady = useRef(false);
+  const lastSyncedSig = useRef("");
+  const latestConfig = useRef({ settings, logo: schoolLogo });
+  latestConfig.current = { settings, logo: schoolLogo };
+  const readLocalTs = () => Number(localStorage.getItem(CONFIG_TS_KEY)) || 0;
+
+  const pushConfig = async (ts: number) => {
+    setSyncState("saving");
+    try {
+      await saveReportConfig({
+        settings: latestConfig.current.settings as unknown as Record<string, string>,
+        logo: latestConfig.current.logo,
+        updatedAt: ts,
+      });
+      setSyncState("saved");
+    } catch {
+      setSyncState("error");
+    }
+  };
+
+  const pullConfig = async () => {
+    try {
+      const remote = await fetchReportConfig();
+      const localTs = readLocalTs();
+      if (remote && remote.updatedAt > localTs) {
+        const r = remote.settings;
+        const current = latestConfig.current.settings;
+        const merged: ReportSettings = {
+          ...current,
+          president: typeof r.president === "string" ? r.president : current.president,
+          teacher: typeof r.teacher === "string" ? r.teacher : current.teacher,
+          director: typeof r.director === "string" ? r.director : current.director,
+          headStudentAffairs:
+            typeof r.headStudentAffairs === "string" ? r.headStudentAffairs : current.headStudentAffairs,
+          term: r.term === "1" || r.term === "2" ? r.term : current.term,
+          year: typeof r.year === "string" && r.year.trim() ? r.year : current.year,
+          semesterStart:
+            typeof r.semesterStart === "string" && r.semesterStart.trim()
+              ? normalizeToMonday(r.semesterStart)
+              : current.semesterStart,
+        };
+        lastSyncedSig.current = JSON.stringify([merged, remote.logo]);
+        setSettings(merged);
+        setSchoolLogo(remote.logo);
+        localStorage.setItem(CONFIG_TS_KEY, String(remote.updatedAt));
+        setSyncState("saved");
+      } else if (!remote || remote.updatedAt < localTs) {
+        const cur = latestConfig.current;
+        const hasData =
+          cur.logo ||
+          cur.settings.president ||
+          cur.settings.teacher ||
+          cur.settings.director;
+        if (hasData) {
+          const ts = localTs || Date.now();
+          localStorage.setItem(CONFIG_TS_KEY, String(ts));
+          lastSyncedSig.current = JSON.stringify([cur.settings, cur.logo]);
+          await pushConfig(ts);
+        }
+      } else {
+        lastSyncedSig.current = JSON.stringify([
+          latestConfig.current.settings,
+          latestConfig.current.logo,
+        ]);
+        setSyncState("saved");
+      }
+    } catch {
+      setSyncState("error");
+    } finally {
+      configReady.current = true;
+    }
+  };
+
+  useEffect(() => {
+    void pullConfig();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void pullConfig();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!configReady.current) return;
+    const sig = JSON.stringify([settings, schoolLogo]);
+    if (sig === lastSyncedSig.current) return;
+    lastSyncedSig.current = sig;
+    const ts = Date.now();
+    localStorage.setItem(CONFIG_TS_KEY, String(ts));
+    const timer = window.setTimeout(() => void pushConfig(ts), 1200);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, schoolLogo]);
+
   const approvedData = inspections.filter((i) => i.status === "approved");
   const WEEKS = Array.from({ length: 21 }, (_, i) => i + 1);
 
@@ -4034,7 +4133,13 @@ function ReportView({
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
               <span>ตั้งค่ารายงาน</span>
               <span className="flex items-center gap-2 text-xs font-medium text-slate-500">
-                ภาคเรียน {settings.term}/{settings.year}
+                {syncState === "saving"
+                  ? "กำลังบันทึก..."
+                  : syncState === "saved"
+                    ? "บันทึกในระบบแล้ว"
+                    : syncState === "error"
+                      ? "ยังไม่ได้ซิงก์"
+                      : `ภาคเรียน ${settings.term}/${settings.year}`}
                 <ChevronDown className="h-4 w-4 transition group-open:rotate-180" />
               </span>
             </summary>
