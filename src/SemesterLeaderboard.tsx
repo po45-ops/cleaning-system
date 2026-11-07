@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { BarChart3, CalendarDays, RefreshCw, Trophy } from "lucide-react";
+import { CalendarDays, RefreshCw, Trophy, X } from "lucide-react";
 
 import { formatDateKey, parseLocalDate } from "./date-utils";
 
@@ -159,21 +159,12 @@ const findOverviewContent = (): HTMLElement | null => {
   ) || null;
 };
 
-const getRankCardClass = (index: number): string => {
-  if (index === 0) {
-    return "border-amber-200 bg-gradient-to-br from-amber-50 via-white to-orange-50";
-  }
-  if (index === 1) {
-    return "border-slate-200 bg-gradient-to-br from-slate-50 via-white to-slate-100";
-  }
-  return "border-orange-200 bg-gradient-to-br from-orange-50 via-white to-amber-50";
-};
-
 export default function SemesterLeaderboard(): React.ReactElement | null {
   const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [detailZoneId, setDetailZoneId] = useState<number | null>(null);
   const today = useMemo(() => new Date(), []);
   const todayKey = formatDateKey(today);
   const semesterMeta = readSemesterMeta(today);
@@ -318,31 +309,40 @@ export default function SemesterLeaderboard(): React.ReactElement | null {
 
   if (!portalHost) return null;
 
+  const medals = ["🥇", "🥈", "🥉"];
+  const podiumOrder = [1, 0, 2].filter((index) => ranking.topThree[index]);
+  const podiumStyle = [
+    "h-[8rem] border-amber-200 bg-gradient-to-b from-amber-100 to-amber-50",
+    "h-[7rem] border-slate-200 bg-gradient-to-b from-slate-100 to-slate-50",
+    "h-[6rem] border-orange-200 bg-gradient-to-b from-orange-100 to-orange-50",
+  ];
+  const restRows = ranking.rows
+    .map((row, index) => ({ row, rank: index + 1 }))
+    .filter(({ rank }) => rank > ranking.topThree.length);
+  const detailRank = ranking.rows.findIndex((row) => row.zoneId === detailZoneId);
+  const detailRow = detailRank >= 0 ? ranking.rows[detailRank] : null;
+
   return createPortal(
-    <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-100 bg-gradient-to-r from-emerald-50/80 via-white to-amber-50/70 px-5 py-5 sm:px-6">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-          <div className="flex items-start gap-3">
-            <div className="rounded-2xl bg-emerald-600 p-3 text-white shadow-sm">
-              <Trophy className="h-6 w-6" />
-            </div>
-            <div>
-              <h3 className="text-lg font-black text-slate-800 sm:text-xl">
-                คะแนนสะสมแต่ละชั้น
-              </h3>
-              <p className="mt-0.5 text-xs leading-relaxed text-slate-500 sm:text-sm">
-                คะแนนที่ครูอนุมัติแล้ว ตั้งแต่ต้นภาคเรียนถึงปัจจุบัน · ภาคเรียนที่ {semesterMeta.term} ปีการศึกษา {semesterMeta.academicYear}
-              </p>
-            </div>
+    <article className="overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-b from-emerald-50/60 to-white shadow-sm">
+      <div className="flex items-center justify-between gap-3 px-4 pt-4 sm:px-6 sm:pt-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="rounded-xl bg-emerald-600 p-2.5 text-white shadow-sm">
+            <Trophy className="h-5 w-5" />
           </div>
-          <div className="inline-flex items-center gap-2 rounded-xl border border-white bg-white/80 px-3 py-2 text-xs font-bold text-slate-600 shadow-sm">
-            <CalendarDays className="h-4 w-4 text-emerald-600" />
-            {formatThaiDate(semesterMeta.startKey)} – {formatThaiDate(todayKey)}
+          <div className="min-w-0">
+            <h3 className="font-black text-slate-800 sm:text-lg">คะแนนสะสมแต่ละชั้น</h3>
+            <p className="text-xs text-slate-500">
+              ภาคเรียนที่ {semesterMeta.term} ปีการศึกษา {semesterMeta.academicYear}
+            </p>
           </div>
         </div>
+        <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm ring-1 ring-slate-100 sm:inline-flex">
+          <CalendarDays className="h-3.5 w-3.5 text-emerald-600" />
+          {formatThaiDate(semesterMeta.startKey)} – {formatThaiDate(todayKey)}
+        </span>
       </div>
 
-      <div className="p-5 sm:p-6">
+      <div className="p-4 sm:p-6">
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-10 text-sm font-bold text-slate-500">
             <RefreshCw className="h-5 w-5 animate-spin text-emerald-600" />
@@ -350,98 +350,63 @@ export default function SemesterLeaderboard(): React.ReactElement | null {
           </div>
         ) : ranking.topThree.length > 0 ? (
           <>
-            <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-              {ranking.topThree.map((item, index) => (
-                <div
-                  key={item.zoneId}
-                  className={`relative overflow-hidden rounded-2xl border p-4 shadow-sm ${getRankCardClass(index)}`}
-                >
-                  <div className="absolute right-3 top-3 text-3xl opacity-80">
-                    {index === 0 ? "🥇" : index === 1 ? "🥈" : "🥉"}
-                  </div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.14em] text-slate-500">
-                    อันดับ {index + 1}
-                  </p>
-                  <p className="mt-1 text-xl font-black text-slate-800">
-                    {item.className}
-                  </p>
-                  <p className="mt-3 text-3xl font-black text-emerald-700">
-                    {item.totalScore}
-                    <span className="ml-1 text-sm font-bold text-slate-400">
-                      คะแนน
-                    </span>
-                  </p>
-                  <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                    <span>{item.recordCount} ครั้ง</span>
-                    <span>เฉลี่ย {item.average?.toFixed(2)}/3</span>
-                  </div>
-                </div>
-              ))}
+            <div className="mx-auto flex max-w-md items-end justify-center gap-2">
+              {podiumOrder.map((index) => {
+                const item = ranking.topThree[index];
+                return (
+                  <button
+                    key={item.zoneId}
+                    type="button"
+                    onClick={() => setDetailZoneId(item.zoneId)}
+                    className="flex min-w-0 flex-1 flex-col items-center transition active:scale-95"
+                  >
+                    <span className="text-3xl leading-none sm:text-4xl">{medals[index]}</span>
+                    <div
+                      className={`mt-1 flex w-full flex-col items-center justify-center rounded-t-2xl border px-1 ${podiumStyle[index]}`}
+                    >
+                      <span className="text-base font-black text-slate-800 sm:text-lg">
+                        {item.className}
+                      </span>
+                      <span className="text-xl font-black leading-tight text-emerald-700 sm:text-2xl">
+                        {item.totalScore}
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-400">คะแนน</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4 sm:p-5">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5 text-emerald-600" />
-                  <div>
-                    <p className="font-black text-slate-800">
-                      อันดับคะแนนสะสม
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      แผนภูมิแท่งเรียงจากคะแนนรวมสูงสุดลงมา
-                    </p>
-                  </div>
-                </div>
-                <span className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-slate-500 shadow-sm">
-                  ผลอนุมัติทั้งหมด {ranking.totalApprovedRecords} ครั้ง
-                </span>
-              </div>
-
-              <div className="space-y-3.5">
-                {ranking.rows.map((item, index) => {
-                  const width = Math.max(
-                    item.totalScore > 0 ? 4 : 0,
-                    (item.totalScore / ranking.maxScore) * 100
-                  );
-                  return (
-                    <div
-                      key={item.zoneId}
-                      className="grid grid-cols-[52px_minmax(0,1fr)_72px] items-center gap-3 sm:grid-cols-[72px_minmax(0,1fr)_90px]"
-                    >
-                      <div className="text-right">
-                        <span className="text-xs font-black text-slate-700 sm:text-sm">
-                          {index + 1}. {item.className}
-                        </span>
-                      </div>
-                      <div className="relative h-8 overflow-hidden rounded-xl bg-white shadow-inner ring-1 ring-slate-100">
-                        <div
-                          className={`h-full rounded-xl transition-all duration-700 ${
-                            index === 0 && item.recordCount > 0
-                              ? "bg-gradient-to-r from-emerald-500 to-emerald-400"
-                              : index < 3 && item.recordCount > 0
-                                ? "bg-gradient-to-r from-emerald-300 to-teal-300"
-                                : "bg-gradient-to-r from-slate-300 to-slate-200"
-                          }`}
-                          style={{ width: `${width}%` }}
-                        />
-                        <div className="pointer-events-none absolute inset-0 flex items-center px-3 text-[11px] font-bold text-slate-600">
-                          {item.recordCount > 0
-                            ? `${item.recordCount} ครั้ง · เฉลี่ย ${item.average?.toFixed(2)}/3`
-                            : "ยังไม่มีคะแนน"}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-sm font-black text-slate-800 sm:text-base">
-                          {item.totalScore}
-                        </span>
-                        <span className="ml-1 text-[10px] font-bold text-slate-400">
-                          คะแนน
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+            <div className="mx-auto mt-3 max-w-2xl divide-y divide-slate-100 rounded-2xl bg-white px-3 shadow-sm ring-1 ring-slate-100">
+              {restRows.map(({ row, rank }) => {
+                const width = Math.max(
+                  row.totalScore > 0 ? 4 : 0,
+                  (row.totalScore / ranking.maxScore) * 100
+                );
+                return (
+                  <button
+                    key={row.zoneId}
+                    type="button"
+                    onClick={() => setDetailZoneId(row.zoneId)}
+                    className="grid w-full grid-cols-[28px_44px_minmax(0,1fr)_auto] items-center gap-2.5 py-2.5 text-left transition hover:bg-emerald-50/40 sm:grid-cols-[32px_56px_minmax(0,1fr)_auto] sm:gap-3"
+                  >
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-50 text-xs font-black text-emerald-700">
+                      {rank}
+                    </span>
+                    <span className="text-sm font-black text-slate-800">{row.className}</span>
+                    <span className="h-2 overflow-hidden rounded-full bg-slate-100">
+                      <span
+                        className="block h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-300 transition-all duration-700"
+                        style={{ width: `${width}%` }}
+                      />
+                    </span>
+                    <span className="text-right text-sm font-black text-slate-800">
+                      {row.totalScore}
+                      <span className="ml-0.5 text-[10px] font-bold text-slate-400">คะแนน</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </>
         ) : (
@@ -458,11 +423,52 @@ export default function SemesterLeaderboard(): React.ReactElement | null {
             การอัปเดตคะแนนสะสมรอบล่าสุดไม่สำเร็จ กำลังแสดงข้อมูลที่โหลดได้ล่าสุด
           </p>
         )}
-
-        <p className="mt-4 text-xs leading-relaxed text-slate-400">
-          * คะแนนสะสมคำนวณจากผลตรวจที่ครูอนุมัติแล้วเท่านั้น หากมีการบันทึกซ้ำในวันเดียวกัน ระบบจะใช้รายการล่าสุดของเขตนั้น
-        </p>
       </div>
+
+      {detailRow && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 sm:items-center sm:p-4"
+          onClick={() => setDetailZoneId(null)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`คะแนนสะสม ${detailRow.className}`}
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl sm:rounded-3xl"
+          >
+            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-300 sm:hidden" />
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-lg font-black text-slate-800">
+                {detailRank < 3 && detailRow.recordCount > 0 ? medals[detailRank] + " " : ""}
+                {detailRow.className}
+              </p>
+              <button
+                type="button"
+                aria-label="ปิด"
+                onClick={() => setDetailZoneId(null)}
+                className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-center">
+              {[
+                ["อันดับ", String(detailRank + 1)],
+                ["คะแนนสะสม", String(detailRow.totalScore)],
+                ["จำนวนครั้ง", `${detailRow.recordCount} ครั้ง`],
+                ["ค่าเฉลี่ย", detailRow.average === null ? "–" : `${detailRow.average.toFixed(2)} / 3`],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-slate-50 px-3 py-3">
+                  <p className="text-xs font-bold text-slate-500">{label}</p>
+                  <p className="mt-0.5 text-xl font-black text-slate-800">{value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </article>,
     portalHost
   );
