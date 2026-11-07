@@ -1,7 +1,14 @@
 @import "tailwindcss";
 
 html {
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-family: "IBM Plex Sans Thai Looped", ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 /* Tailwind v4 defaults borders to currentColor; keep form and card lines soft. */

@@ -1056,8 +1056,8 @@ export default function App() {
                 </label>
               )}
             </div>
-            <div>
-              <h1 className="text-base md:text-xl font-bold leading-tight drop-shadow-sm">
+            <div className="min-w-0 pr-14 sm:pr-0">
+              <h1 className="text-[15px] sm:text-base md:text-xl font-bold leading-tight drop-shadow-sm">
                 ระบบตรวจเวรทำความสะอาด
               </h1>
               <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
@@ -1157,7 +1157,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-[1500px] mx-auto p-4 mt-2">
+      <main className="max-w-[1500px] mx-auto p-4 pb-28 md:pb-4 mt-2">
         {activeTab === "overview" ? (
           <PublicDashboard
             inspections={inspections}
@@ -1226,10 +1226,10 @@ export default function App() {
         )}
       </main>
 
-      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white shadow-[0_-2px_10px_rgba(0,0,0,0.1)] flex justify-start overflow-x-auto p-2 z-50 print:hidden">
+      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white shadow-[0_-2px_10px_rgba(0,0,0,0.1)] flex justify-between gap-0.5 px-1 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] z-50 print:hidden">
         <button
           onClick={() => setActiveTab("overview")}
-          className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
+          className={`flex min-w-0 flex-1 flex-col items-center rounded-lg px-0.5 py-2 ${
             activeTab === "overview"
               ? "text-emerald-600 font-bold"
               : "text-slate-400"
@@ -1241,7 +1241,7 @@ export default function App() {
 
         <button
           onClick={() => setActiveTab("student")}
-          className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
+          className={`flex min-w-0 flex-1 flex-col items-center rounded-lg px-0.5 py-2 ${
             activeTab === "student"
               ? "text-emerald-600 font-bold"
               : "text-slate-400"
@@ -1253,7 +1253,7 @@ export default function App() {
 
         <button
           onClick={() => setActiveTab("teacher")}
-          className={`relative flex min-w-[68px] flex-1 flex-col items-center p-2 ${
+          className={`relative flex min-w-0 flex-1 flex-col items-center rounded-lg px-0.5 py-2 ${
             activeTab === "teacher"
               ? "text-emerald-600 font-bold"
               : "text-slate-400"
@@ -1270,7 +1270,7 @@ export default function App() {
 
         <button
           onClick={() => setActiveTab("calendar")}
-          className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
+          className={`flex min-w-0 flex-1 flex-col items-center rounded-lg px-0.5 py-2 ${
             activeTab === "calendar"
               ? "text-emerald-600 font-bold"
               : "text-slate-400"
@@ -1284,7 +1284,7 @@ export default function App() {
           <>
             <button
               onClick={() => setActiveTab("report")}
-              className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
+              className={`flex min-w-0 flex-1 flex-col items-center rounded-lg px-0.5 py-2 ${
                 activeTab === "report"
                   ? "text-emerald-600 font-bold"
                   : "text-slate-400"
@@ -1295,7 +1295,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab("users")}
-              className={`flex min-w-[68px] flex-1 flex-col items-center p-2 ${
+              className={`flex min-w-0 flex-1 flex-col items-center rounded-lg px-0.5 py-2 ${
                 activeTab === "users"
                   ? "text-emerald-600 font-bold"
                   : "text-slate-400"
@@ -1445,8 +1445,16 @@ function LoginScreen({
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8 w-full max-w-md">
-        <div className="text-center mb-8">
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-5 sm:p-8 w-full max-w-md overflow-hidden">
+        <img
+          src={`/cleaning-system/img/login-banner.webp`}
+          alt=""
+          aria-hidden="true"
+          width={960}
+          height={640}
+          className="-mx-5 -mt-5 mb-5 sm:-mx-8 sm:-mt-8 sm:mb-6 w-[calc(100%+2.5rem)] sm:w-[calc(100%+4rem)] max-w-none h-36 sm:h-44 object-cover object-center"
+        />
+        <div className="text-center mb-6 sm:mb-8">
           <div className="w-24 h-24 mx-auto bg-slate-50 border-2 border-emerald-100 rounded-full flex items-center justify-center overflow-hidden mb-4 shadow-sm">
             {schoolLogo ? (
               <img
@@ -2379,7 +2387,14 @@ function TeacherApproval({
 
         {pending.length === 0 ? (
           <div className="text-center py-8 text-slate-400 bg-slate-50 rounded-lg">
-            <CheckCircle className="w-12 h-12 mx-auto mb-2 text-slate-300" />
+            <img
+              src={`/cleaning-system/img/empty-approvals.webp`}
+              alt=""
+              aria-hidden="true"
+              width={240}
+              height={240}
+              className="w-32 h-32 sm:w-40 sm:h-40 mx-auto mb-2 object-contain"
+            />
             <p>ไม่มีรายการที่รอการอนุมัติ</p>
           </div>
         ) : (
@@ -2404,7 +2419,7 @@ function TeacherApproval({
                         {zone.name} ({zone.class})
                       </h3>
                       <p className="text-sm text-slate-500">
-                        วันที่: {item.date}
+                        วันที่: {formatThaiDateShort(item.date)}
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-2">
@@ -3982,7 +3997,7 @@ function ReportView({
                     ? `สัปดาห์ที่ ${currentAcademicWeek}`
                     : "ช่วงนอกภาคเรียน"}
                 </span>
-                <label className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-900">
+                <label className="flex min-w-0 flex-col items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-900 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   <span className="flex items-center gap-2">
                     <Clock className="h-4 w-4 text-emerald-600" /> สัปดาห์ที่แสดง
                   </span>
@@ -3991,7 +4006,7 @@ function ReportView({
                     onChange={(e) =>
                       setSelectedReportWeek(parseInt(e.target.value))
                     }
-                    className="max-w-[260px] rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-bold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full min-w-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-bold text-emerald-800 sm:w-auto sm:max-w-[260px] outline-none focus:ring-2 focus:ring-emerald-500"
                   >
                     {WEEKS.map((week) => {
                       const dates = getWeekDatesForWeek(week);

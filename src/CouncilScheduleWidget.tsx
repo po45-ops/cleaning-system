@@ -779,7 +779,7 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-24 right-4 z-[70] flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-xl transition hover:bg-indigo-700 md:bottom-6 md:right-6 print:hidden"
+        className="fixed right-[3.9rem] top-3 z-[70] flex h-11 w-11 items-center justify-center gap-2 rounded-full bg-indigo-600 text-sm font-bold text-white shadow-lg transition hover:bg-indigo-700 sm:right-4 sm:top-auto sm:bottom-24 sm:h-auto sm:w-auto sm:px-4 sm:py-3 md:bottom-6 md:right-6 print:hidden"
         aria-label="เปิดตารางจัดเวรตรวจ"
       >
         <CalendarDays className="h-5 w-5" />
