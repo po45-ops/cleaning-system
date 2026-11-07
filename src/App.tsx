@@ -49,6 +49,7 @@ import {
   Save,
   TableProperties,
   Sparkles,
+  ChevronDown,
   Home,
   LogIn,
 } from "lucide-react";
@@ -2717,6 +2718,23 @@ function ReportView({
   const [savingCell, setSavingCell] = useState("");
   const [savedCell, setSavedCell] = useState("");
   const [reportMode, setReportMode] = useState("weekly");
+  const paperWrapRef = useRef<HTMLDivElement | null>(null);
+  const [paperZoom, setPaperZoom] = useState(1);
+  useEffect(() => {
+    const el = paperWrapRef.current;
+    if (!el) return;
+    const update = () => {
+      const style = window.getComputedStyle(el);
+      const pad = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      const avail = el.clientWidth - pad - 2;
+      setPaperZoom(Math.max(0.3, Math.min(1, avail / 794)));
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const handleReportLogoUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -3837,6 +3855,7 @@ function ReportView({
     <div className="space-y-6">
       {/* กติกาหน้ากระดาษใช้ร่วมกันทั้งตัวอย่าง, Print และ PDF */}
       <style>{`
+        .paper-zoom { zoom: var(--paper-zoom, 1); }
         @font-face {
           font-family: 'TH Sarabun PSK';
           src: url('https://raw.githubusercontent.com/SarabunConsortium/TH-Sarabun-PSK/master/THSarabunPSK%20Regular.ttf') format('truetype');
@@ -3896,6 +3915,7 @@ function ReportView({
           .screen-only { display: none !important; }
           .print-only { display: inline !important; }
           table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
+          .paper-zoom { zoom: 1 !important; }
           thead { display: table-header-group; }
           tfoot { display: table-footer-group; }
           tr { page-break-inside: avoid; break-inside: avoid; }
@@ -3904,75 +3924,63 @@ function ReportView({
       `}</style>
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm print:hidden">
-        <div className="relative overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-500 p-5 text-white md:p-7">
-          <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-white/10" />
-          <div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
-            <div>
-              <span className="mb-3 inline-flex items-center gap-1 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold">
-                <Sparkles className="h-3.5 w-3.5" /> ศูนย์รายงานและส่งออก
-              </span>
-              <h2 className="text-2xl font-bold">รายงาน</h2>
-            </div>
-            <div className="grid grid-cols-3 gap-2 lg:min-w-[420px]">
-              <button
-                onClick={exportToWord}
-                disabled={Boolean(exporting)}
-                className="group rounded-xl border border-white/20 bg-white p-3 text-left text-slate-800 shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
-              >
-                <FileText className="mb-2 h-5 w-5 text-blue-600" />
-                <span className="block text-sm font-bold">Word</span>
-                <span className="hidden text-[11px] text-slate-500 sm:block">ไฟล์ .docx</span>
-              </button>
-              <button
-                onClick={printReport}
-                disabled={Boolean(exporting) || isPrinting}
-                className="group rounded-xl border border-white/20 bg-slate-900 p-3 text-left text-white shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
-              >
-                {exporting === "pdf" ? (
-                  <Clock className="mb-2 h-5 w-5 animate-spin" />
-                ) : (
-                  <Printer className="mb-2 h-5 w-5" />
-                )}
-                <span className="block text-sm font-bold">PDF</span>
-                <span className="hidden text-[11px] text-slate-300 sm:block">A4 พร้อมพิมพ์</span>
-              </button>
-              <button
-                onClick={() => void printWithImages()}
-                disabled={Boolean(exporting) || isPrinting}
-                className="group rounded-xl border border-white/20 bg-white p-3 text-left text-slate-800 shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
-                title="เปิดหน้าต่างพิมพ์ของเบราว์เซอร์ ตัวอักษรคมชัด เลือกคัดลอกได้ หรือเลือก 'บันทึกเป็น PDF'"
-              >
-                {exporting === "print" ? (
-                  <Clock className="mb-2 h-5 w-5 animate-spin text-slate-600" />
-                ) : (
-                  <Printer className="mb-2 h-5 w-5 text-slate-600" />
-                )}
-                <span className="block text-sm font-bold">
-                  {exporting === "print" ? "กำลังเตรียมรูป..." : "พิมพ์"}
-                </span>
-                <span className="hidden text-[11px] text-slate-500 sm:block">ตัวอักษรคมชัด</span>
-              </button>
-            </div>
+        <div className="flex items-center justify-between gap-3 bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-500 px-4 py-3.5 text-white md:px-6 md:py-4">
+          <h2 className="flex items-center gap-2 text-base font-bold sm:text-lg md:text-xl">
+            <FileText className="hidden h-5 w-5 min-[400px]:block" /> รายงาน
+          </h2>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <button
+              onClick={exportToWord}
+              disabled={Boolean(exporting)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-[13px] sm:px-3 sm:text-sm font-bold text-slate-800 shadow transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
+            >
+              <FileText className="h-4 w-4 text-blue-600" /> Word
+            </button>
+            <button
+              onClick={printReport}
+              disabled={Boolean(exporting) || isPrinting}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-2.5 py-2 text-[13px] sm:px-3 sm:text-sm font-bold text-white shadow transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
+            >
+              {exporting === "pdf" ? (
+                <Clock className="h-4 w-4 animate-spin" />
+              ) : (
+                <Printer className="h-4 w-4" />
+              )}
+              PDF
+            </button>
+            <button
+              onClick={() => void printWithImages()}
+              disabled={Boolean(exporting) || isPrinting}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-[13px] sm:px-3 sm:text-sm font-bold text-slate-800 shadow transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
+              title="เปิดหน้าต่างพิมพ์ของเบราว์เซอร์ ตัวอักษรคมชัด เลือกคัดลอกได้ หรือเลือก 'บันทึกเป็น PDF'"
+            >
+              {exporting === "print" ? (
+                <Clock className="h-4 w-4 animate-spin text-slate-600" />
+              ) : (
+                <Printer className="h-4 w-4 text-slate-600" />
+              )}
+              {exporting === "print" ? "รอสักครู่" : "พิมพ์"}
+            </button>
           </div>
         </div>
 
-        <div className="space-y-5 p-5 md:p-6">
+        <div className="space-y-3 p-3 sm:p-4 md:p-5">
           {exportNotice && (
-            <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+            <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
               <span>{exportNotice}</span>
               <button type="button" onClick={() => setExportNotice("")} className="text-xs font-bold text-amber-700 hover:underline">ปิด</button>
             </div>
           )}
           {pdfError && (
-            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
+            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
               {pdfError}
             </div>
           )}
-          <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-            <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 xl:w-auto">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 sm:w-auto">
               <button
                 onClick={() => setReportMode("weekly")}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold transition-all xl:flex-none ${
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
                   reportMode === "weekly"
                     ? "bg-white text-emerald-700 shadow-sm"
                     : "text-slate-500 hover:text-slate-800"
@@ -3982,198 +3990,140 @@ function ReportView({
               </button>
               <button
                 onClick={() => setReportMode("semester")}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold transition-all xl:flex-none ${
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
                   reportMode === "semester"
                     ? "bg-white text-emerald-700 shadow-sm"
                     : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                <BarChart3 className="h-4 w-4" /> ภาคเรียน 21 สัปดาห์
+                <BarChart3 className="h-4 w-4" /> ทั้งภาคเรียน
               </button>
             </div>
 
             {reportMode === "weekly" && (
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <span className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-bold text-blue-800">
-                  <CalendarDays className="h-4 w-4" />
-                  วันนี้คือ{currentAcademicWeek >= 1 && currentAcademicWeek <= 21
-                    ? `สัปดาห์ที่ ${currentAcademicWeek}`
-                    : "ช่วงนอกภาคเรียน"}
-                </span>
-                <label className="flex min-w-0 flex-col items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-900 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                  <span className="flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-emerald-600" /> สัปดาห์ที่แสดง
-                  </span>
-                  <select
-                    value={selectedReportWeek}
-                    onChange={(e) =>
-                      setSelectedReportWeek(parseInt(e.target.value))
-                    }
-                    className="w-full min-w-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-bold text-emerald-800 sm:w-auto sm:max-w-[260px] outline-none focus:ring-2 focus:ring-emerald-500"
-                  >
-                    {WEEKS.map((week) => {
-                      const dates = getWeekDatesForWeek(week);
-                      return (
-                        <option key={week} value={week}>
-                          สัปดาห์ที่ {week} · {formatThaiDateCompact(dates[0])} – {formatThaiDateCompact(dates[4])}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </label>
-              </div>
+              <select
+                aria-label="สัปดาห์ที่แสดง"
+                value={selectedReportWeek}
+                onChange={(e) => setSelectedReportWeek(parseInt(e.target.value))}
+                className="w-full min-w-0 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-[13px] font-bold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500 sm:w-auto sm:text-sm sm:max-w-[320px]"
+              >
+                {WEEKS.map((week) => {
+                  const dates = getWeekDatesForWeek(week);
+                  return (
+                    <option key={week} value={week}>
+                      {week === currentAcademicWeek ? "● " : ""}สัปดาห์ที่ {week} · {formatThaiDateCompact(dates[0])} – {formatThaiDateCompact(dates[4])}
+                      
+                    </option>
+                  );
+                })}
+              </select>
             )}
           </div>
 
-          <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-4">
-            <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center md:col-span-4">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-100 bg-emerald-50">
-                {schoolLogo ? (
-                  <img
-                    src={schoolLogo}
-                    alt="ตัวอย่างตราโรงเรียน"
-                    className="h-full w-full object-contain p-1"
-                  />
-                ) : (
-                  <Camera className="h-7 w-7 text-emerald-600" />
-                )}
+          <details className="group rounded-xl border border-slate-200 bg-slate-50">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
+              <span>ตั้งค่ารายงาน</span>
+              <span className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                ภาคเรียน {settings.term}/{settings.year}
+                <ChevronDown className="h-4 w-4 transition group-open:rotate-180" />
+              </span>
+            </summary>
+            <div className="space-y-4 border-t border-slate-200 p-4">
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-emerald-100 bg-emerald-50">
+                  {schoolLogo ? (
+                    <img src={schoolLogo} alt="ตัวอย่างตราโรงเรียน" className="h-full w-full object-contain p-1" />
+                  ) : (
+                    <Camera className="h-5 w-5 text-emerald-600" />
+                  )}
+                </div>
+                <p className="min-w-0 flex-1 text-sm font-bold leading-tight text-slate-800">ตราโรงเรียน</p>
+                <div className="flex gap-2">
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700">
+                    <Upload className="h-4 w-4" />
+                    {schoolLogo ? "เปลี่ยน" : "ใส่รูป"}
+                    <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={handleReportLogoUpload} />
+                  </label>
+                  {schoolLogo && (
+                    <button
+                      type="button"
+                      onClick={() => setSchoolLogo("")}
+                      aria-label="ลบรูป"
+                      className="inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-red-700 transition hover:bg-red-100"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold text-slate-800">
-                  ตราโรงเรียน / รูปส่วนหัวรายงาน
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700">
-                  <Upload className="h-4 w-4" />
-                  {schoolLogo ? "เปลี่ยนรูป" : "ใส่รูป"}
+
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <label className="col-span-2">
+                  <span className="mb-1 block text-xs font-bold text-slate-600">วันเปิดภาคเรียน (วันจันทร์)</span>
                   <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="sr-only"
-                    onChange={handleReportLogoUpload}
+                    type="date"
+                    value={settings.semesterStart}
+                    onChange={(event) =>
+                      setSettings({ ...settings, semesterStart: normalizeToMonday(event.target.value) })
+                    }
+                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                   />
                 </label>
-                {schoolLogo && (
-                  <button
-                    type="button"
-                    onClick={() => setSchoolLogo("")}
-                    className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100"
+                <label>
+                  <span className="mb-1 block text-xs font-bold text-slate-600">ภาคเรียนที่</span>
+                  <select
+                    value={settings.term}
+                    onChange={(event) => setSettings({ ...settings, term: event.target.value })}
+                    className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500"
                   >
-                    <Trash2 className="h-4 w-4" /> ลบรูป
-                  </button>
-                )}
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                  </select>
+                </label>
+                <label>
+                  <span className="mb-1 block text-xs font-bold text-slate-600">ปีการศึกษา</span>
+                  <input
+                    type="number"
+                    value={settings.year}
+                    onChange={(event) => setSettings({ ...settings, year: event.target.value })}
+                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 md:grid-cols-3">
+                {([
+                  ["ประธานนักเรียน", "president"],
+                  ["ครูกิจการนักเรียน", "teacher"],
+                  ["ผู้อำนวยการโรงเรียน", "director"],
+                ] as const).map(([label, key]) => (
+                  <label key={key}>
+                    <span className="mb-1 block text-xs font-semibold text-slate-500">{label}</span>
+                    <input
+                      type="text"
+                      placeholder="ชื่อ-นามสกุล"
+                      value={settings[key]}
+                      onChange={(e) => setSettings({ ...settings, [key]: e.target.value })}
+                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                    />
+                  </label>
+                ))}
               </div>
             </div>
-            <label className="md:col-span-2">
-              <span className="mb-1 block text-xs font-bold text-slate-600">
-                วันจันทร์ของสัปดาห์ที่ 1 (วันเปิดภาคเรียน)
-              </span>
-              <input
-                type="date"
-                value={settings.semesterStart}
-                onChange={(event) =>
-                  setSettings({
-                    ...settings,
-                    semesterStart: normalizeToMonday(event.target.value),
-                  })
-                }
-                className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-              />
-              <span className="mt-1 block text-[11px] text-slate-500">
-                ระบบใช้วันนี้เป็นหลักนับสัปดาห์ที่ 1–21 และปรับวันที่เลือกให้เป็นวันจันทร์อัตโนมัติ
-              </span>
-            </label>
-            <label>
-              <span className="mb-1 block text-xs font-bold text-slate-600">
-                ภาคเรียนที่
-              </span>
-              <select
-                value={settings.term}
-                onChange={(event) =>
-                  setSettings({ ...settings, term: event.target.value })
-                }
-                className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500"
-              >
-                <option value="1">1</option>
-                <option value="2">2</option>
-              </select>
-            </label>
-            <label>
-              <span className="mb-1 block text-xs font-bold text-slate-600">
-                ปีการศึกษา
-              </span>
-              <input
-                type="number"
-                value={settings.year}
-                onChange={(event) =>
-                  setSettings({ ...settings, year: event.target.value })
-                }
-                className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500"
-              />
-            </label>
-          </div>
+          </details>
 
           {reportMode === "weekly" && (
-            <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-              <TableProperties className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
-              <div>
-                <p className="font-bold">แตะช่องในตารางเพื่อแก้คะแนน (0–3)</p>
-              </div>
-            </div>
+            <p className="flex items-center gap-2 px-1 text-xs font-semibold text-blue-700"><span className="sr-only">● = สัปดาห์ปัจจุบัน</span>
+              <TableProperties className="h-4 w-4 shrink-0" /> แตะช่องในตารางเพื่อแก้คะแนน (0–3)
+            </p>
           )}
-
-          <div className="grid grid-cols-1 gap-4 border-t border-slate-100 pt-5 md:grid-cols-3">
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-500">
-              ประธานนักเรียน
-            </label>
-            <input
-              type="text"
-              placeholder="ชื่อ-นามสกุล"
-              value={settings.president}
-              onChange={(e) =>
-                setSettings({ ...settings, president: e.target.value })
-              }
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-500">
-              ครูกิจการนักเรียน
-            </label>
-            <input
-              type="text"
-              placeholder="ชื่อ-นามสกุล"
-              value={settings.teacher}
-              onChange={(e) =>
-                setSettings({ ...settings, teacher: e.target.value })
-              }
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-500">
-              ผู้อำนวยการโรงเรียน
-            </label>
-            <input
-              type="text"
-              placeholder="ชื่อ-นามสกุล"
-              value={settings.director}
-              onChange={(e) =>
-                setSettings({ ...settings, director: e.target.value })
-              }
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm outline-none transition focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
-            />
-          </div>
-          </div>
         </div>
       </div>
 
       {/* 🚀 Wrapper ชั้นนอก ลบเงาและกรอบออกตอนพิมพ์ เพื่อป้องกันขอบล้นใน PDF */}
-      <div className="w-full overflow-x-auto print-reset bg-slate-100 py-6 px-2 md:p-8 rounded-xl print:bg-transparent print:p-0 border border-slate-300 print:border-none">
+      <div ref={paperWrapRef} className="w-full overflow-x-auto print-reset bg-slate-100 py-3 px-1.5 sm:py-5 sm:px-3 md:p-8 rounded-xl print:bg-transparent print:p-0 border border-slate-300 print:border-none">
         {/* 🚀 ล็อกกล่องกระดาษไว้ที่ w-full ให้มันหด-ขยายตัวตาม A4 อัตโนมัติ */}
-        <div className="w-full min-w-[794px] print:min-w-0 print:w-full mx-auto bg-white shadow-lg print:shadow-none border border-slate-300 print:border-none print-reset">
+        <div style={{ ["--paper-zoom" as string]: paperZoom } as React.CSSProperties} className="paper-zoom w-full min-w-[794px] print:min-w-0 print:w-full mx-auto bg-white shadow-lg print:shadow-none border border-slate-300 print:border-none print-reset">
           <div
             id="printable-area"
             className="font-sarabun text-[16pt] text-black leading-normal w-full p-8 print:p-0 box-border bg-white print-reset"
@@ -4667,6 +4617,8 @@ function UserManagement({
   const [confirmAdminPassword, setConfirmAdminPassword] = useState("");
   const [adminMessage, setAdminMessage] = useState("");
   const [isSavingAdmin, setIsSavingAdmin] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const handleChangeAdminPassword = async (
     event: React.FormEvent<HTMLFormElement>
@@ -4762,18 +4714,27 @@ function UserManagement({
 
   return (
     <div className="space-y-6">
-      <div className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] print:hidden md:p-7">
-        <h2 className="mb-2 flex items-center gap-3 text-xl font-bold text-slate-800">
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-50">
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm print:hidden md:p-6">
+        <button
+          type="button"
+          onClick={() => setAdminOpen((v) => !v)}
+          aria-expanded={adminOpen || !adminCredential}
+          className="flex w-full items-center gap-3 text-left"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50">
             <Key className="h-5 w-5 text-emerald-600" />
           </span>
-          รหัสผ่านแอดมิน
-        </h2>
-        <p className="mb-5 pl-0 text-sm leading-relaxed text-slate-500 md:pl-[52px]">
-          {adminCredential
-            ? "กรอกรหัสปัจจุบัน แล้วตั้งรหัสใหม่"
-            : `ตั้งรหัสผ่านอย่างน้อย ${MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษร`}
-        </p>
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-bold text-slate-800 md:text-lg">รหัสผ่านแอดมิน</span>
+            <span className="block text-xs text-slate-500">
+              {adminCredential ? "ตั้งรหัสแล้ว" : `ยังไม่ได้ตั้ง · อย่างน้อย ${MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษร`}
+            </span>
+          </span>
+          <span className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600">
+            {adminCredential ? "เปลี่ยนรหัส" : "ตั้งรหัส"}
+            <ChevronDown className={`h-4 w-4 transition ${adminOpen || !adminCredential ? "rotate-180" : ""}`} />
+          </span>
+        </button>
         {adminMessage && (
           <p className="mb-5 rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-sm font-bold text-amber-800">
             {adminMessage}
@@ -4781,7 +4742,9 @@ function UserManagement({
         )}
         <form
           onSubmit={handleChangeAdminPassword}
-          className={`grid gap-4 rounded-2xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100 md:p-5 ${
+          className={`mt-4 gap-3 rounded-2xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100 ${
+            adminOpen || !adminCredential ? "grid" : "hidden"
+          } ${
             adminCredential
               ? "md:grid-cols-2 xl:grid-cols-4"
               : "md:grid-cols-3"
@@ -4847,21 +4810,31 @@ function UserManagement({
         </form>
       </div>
 
-      <div className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-[0_12px_40px_rgba(15,23,42,0.06)] print:hidden md:p-7">
-        <h2 className="mb-5 flex items-center gap-3 text-xl font-bold text-slate-800">
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-50">
+      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm print:hidden md:p-6">
+        <div className="mb-3 flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50">
             <UserPlus className="h-5 w-5 text-emerald-600" />
           </span>
-          จัดการรหัสผ่านสภานักเรียน
-        </h2>
+          <h2 className="min-w-0 flex-1 text-base font-bold text-slate-800 md:text-lg">
+            บัญชีสภานักเรียน <span className="text-sm font-medium text-slate-500">({credentials.length})</span>
+          </h2>
+          <button
+            type="button"
+            onClick={() => setAddOpen((v) => !v)}
+            aria-expanded={addOpen}
+            className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700"
+          >
+            {addOpen ? "ปิด" : "+ เพิ่ม/เปลี่ยนรหัส"}
+          </button>
+        </div>
         {studentMessage && (
-          <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">
+          <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">
             {studentMessage}
           </p>
         )}
         <form
           onSubmit={handleAddUser}
-          className="mb-5 grid items-end gap-4 rounded-2xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:p-5"
+          className={`mb-4 items-end gap-3 rounded-2xl bg-slate-50/70 p-4 ring-1 ring-inset ring-slate-100 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] ${addOpen ? "grid" : "hidden"}`}
         >
           <div className="flex-1">
             <label className="mb-1.5 block text-xs font-bold text-slate-600">
@@ -4895,7 +4868,30 @@ function UserManagement({
             {isSaving ? "กำลังบันทึก..." : "เพิ่ม / เปลี่ยนรหัส"}
           </button>
         </form>
-        <div className="overflow-x-auto rounded-2xl border border-slate-200/80">
+        <ul className="grid grid-cols-2 gap-2 md:hidden">
+          {credentials.map((c) => (
+            <li key={c.id} className="flex items-center justify-between gap-1 rounded-xl border border-slate-200 bg-white py-1.5 pl-3 pr-1.5">
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-bold text-slate-700">{c.id}</span>
+                <span className="flex items-center gap-1 text-[11px] text-emerald-700">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> ตั้งรหัสแล้ว
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!window.confirm(`ต้องการลบรหัสของบัญชี ${c.id} ใช่หรือไม่?\nบัญชีนี้จะเข้าสู่ระบบไม่ได้จนกว่าจะตั้งรหัสใหม่`)) return;
+                  setCredentials((current) => current.filter((user) => user.id !== c.id));
+                }}
+                aria-label={`ลบบัญชี ${c.id}`}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-red-500 hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="hidden overflow-x-auto rounded-2xl border border-slate-200/80 md:block">
           <table className="w-full min-w-[560px] bg-white text-left">
             <thead>
               <tr className="bg-slate-50 text-sm text-slate-600">
