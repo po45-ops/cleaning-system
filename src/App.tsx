@@ -2714,6 +2714,7 @@ function ReportView({
   const [selectedReportWeek, setSelectedReportWeek] = useState(1);
   const [isPrinting, setIsPrinting] = useState(false);
   const [exporting, setExporting] = useState("");
+  const [exportMenu, setExportMenu] = useState<"" | "word" | "pdf">("");
   const [pdfError, setPdfError] = useState("");
   const [exportNotice, setExportNotice] = useState("");
   const [savingCell, setSavingCell] = useState("");
@@ -4171,25 +4172,68 @@ function ReportView({
             <FileText className="hidden h-5 w-5 min-[400px]:block" /> รายงาน
           </h2>
           <div className="flex items-center gap-1 sm:gap-2">
-            <button
-              onClick={() => void exportToWord()}
-              disabled={Boolean(exporting)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-[13px] sm:px-3 sm:text-sm font-bold text-slate-800 shadow transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
-            >
-              <FileText className="h-4 w-4 text-blue-600" /> Word
-            </button>
-            <button
-              onClick={() => void printReport()}
-              disabled={Boolean(exporting) || isPrinting}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-2.5 py-2 text-[13px] sm:px-3 sm:text-sm font-bold text-white shadow transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
-            >
-              {exporting === "pdf" ? (
-                <Clock className="h-4 w-4 animate-spin" />
-              ) : (
-                <Printer className="h-4 w-4" />
-              )}
-              PDF
-            </button>
+            {exportMenu && (
+              <button
+                type="button"
+                aria-label="ปิดเมนู"
+                className="fixed inset-0 z-10 cursor-default"
+                onClick={() => setExportMenu("")}
+              />
+            )}
+            {(["word", "pdf"] as const).map((kind) => {
+              const multi = reportMode === "weekly" && availableWeeks.length > 1;
+              const run = (all: boolean) => {
+                setExportMenu("");
+                if (kind === "word") void exportToWord(all);
+                else void printReport(all);
+              };
+              const busy = exporting === kind || exporting === `${kind}-all`;
+              return (
+                <div key={kind} className="relative">
+                  <button
+                    onClick={() => (multi ? setExportMenu(exportMenu === kind ? "" : kind) : run(false))}
+                    disabled={Boolean(exporting) || isPrinting}
+                    aria-haspopup={multi ? "menu" : undefined}
+                    aria-expanded={multi ? exportMenu === kind : undefined}
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-[13px] sm:px-3 sm:text-sm font-bold shadow transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60 ${
+                      kind === "word" ? "bg-white text-slate-800" : "bg-slate-900 text-white"
+                    }`}
+                  >
+                    {busy ? (
+                      <Clock className="h-4 w-4 animate-spin" />
+                    ) : kind === "word" ? (
+                      <FileText className="h-4 w-4 text-blue-600" />
+                    ) : (
+                      <Printer className="h-4 w-4" />
+                    )}
+                    {kind === "word" ? "Word" : "PDF"}
+                    {multi && <ChevronDown className="h-3.5 w-3.5 opacity-70" />}
+                  </button>
+                  {multi && exportMenu === kind && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full z-20 mt-2 w-56 overflow-hidden rounded-xl bg-white text-slate-800 shadow-xl ring-1 ring-slate-200"
+                    >
+                      <button
+                        role="menuitem"
+                        onClick={() => run(false)}
+                        className="block w-full px-4 py-3 text-left text-sm font-bold hover:bg-emerald-50"
+                      >
+                        เฉพาะสัปดาห์ที่ {selectedReportWeek}
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={() => run(true)}
+                        className="block w-full border-t border-slate-100 px-4 py-3 text-left text-sm font-bold text-emerald-700 hover:bg-emerald-50"
+                      >
+                        ทุกสัปดาห์ ({availableWeeks[0]}–{availableWeeks[availableWeeks.length - 1]})
+                        <span className="block text-xs font-medium text-slate-500">รวมเป็นไฟล์เดียว</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <button
               onClick={() => void printWithImages()}
               disabled={Boolean(exporting) || isPrinting}
@@ -4289,43 +4333,6 @@ function ReportView({
               </select>
             )}
           </div>
-
-          {reportMode === "weekly" && availableWeeks.length > 1 && (
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
-              <div className="min-w-0 flex-1 text-[13px] font-bold text-emerald-900 sm:text-sm">
-                บันทึกทุกสัปดาห์ในไฟล์เดียว
-                <span className="ml-1 font-semibold text-emerald-700">
-                  (สัปดาห์ที่ {availableWeeks[0]}–{availableWeeks[availableWeeks.length - 1]})
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => void exportToWord(true)}
-                disabled={Boolean(exporting) || isPrinting}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[13px] font-bold text-slate-800 shadow-sm ring-1 ring-emerald-200 transition hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60 sm:text-sm"
-              >
-                {exporting === "word-all" ? (
-                  <Clock className="h-4 w-4 animate-spin" />
-                ) : (
-                  <FileText className="h-4 w-4 text-blue-600" />
-                )}
-                {exporting === "word-all" ? "กำลังสร้าง…" : "Word ทั้งหมด"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void printReport(true)}
-                disabled={Boolean(exporting) || isPrinting}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[13px] font-bold text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60 sm:text-sm"
-              >
-                {exporting === "pdf-all" ? (
-                  <Clock className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Printer className="h-4 w-4" />
-                )}
-                {exporting === "pdf-all" ? "กำลังสร้าง…" : "PDF ทั้งหมด"}
-              </button>
-            </div>
-          )}
 
           <details className="group rounded-xl border border-slate-200 bg-slate-50">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
