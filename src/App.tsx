@@ -2720,6 +2720,16 @@ function ReportView({
   const [reportMode, setReportMode] = useState("weekly");
   const paperWrapRef = useRef<HTMLDivElement | null>(null);
   const [paperZoom, setPaperZoom] = useState(1);
+  const paperInnerRef = useRef<HTMLDivElement | null>(null);
+  const [paperH, setPaperH] = useState(0);
+  useEffect(() => {
+    const el = paperInnerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setPaperH(el.offsetHeight));
+    ro.observe(el);
+    setPaperH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => {
     const el = paperWrapRef.current;
     if (!el) return;
@@ -3855,7 +3865,6 @@ function ReportView({
     <div className="space-y-6">
       {/* กติกาหน้ากระดาษใช้ร่วมกันทั้งตัวอย่าง, Print และ PDF */}
       <style>{`
-        .paper-zoom { zoom: var(--paper-zoom, 1); }
         @font-face {
           font-family: 'TH Sarabun PSK';
           src: url('https://raw.githubusercontent.com/SarabunConsortium/TH-Sarabun-PSK/master/THSarabunPSK%20Regular.ttf') format('truetype');
@@ -3915,7 +3924,8 @@ function ReportView({
           .screen-only { display: none !important; }
           .print-only { display: inline !important; }
           table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
-          .paper-zoom { zoom: 1 !important; }
+          .paper-scale-outer { width: 100% !important; height: auto !important; }
+          .paper-scale-inner { transform: none !important; width: 100% !important; }
           thead { display: table-header-group; }
           tfoot { display: table-footer-group; }
           tr { page-break-inside: avoid; break-inside: avoid; }
@@ -4123,7 +4133,8 @@ function ReportView({
       {/* 🚀 Wrapper ชั้นนอก ลบเงาและกรอบออกตอนพิมพ์ เพื่อป้องกันขอบล้นใน PDF */}
       <div ref={paperWrapRef} className="w-full overflow-x-auto print-reset bg-slate-100 py-3 px-1.5 sm:py-5 sm:px-3 md:p-8 rounded-xl print:bg-transparent print:p-0 border border-slate-300 print:border-none">
         {/* 🚀 ล็อกกล่องกระดาษไว้ที่ w-full ให้มันหด-ขยายตัวตาม A4 อัตโนมัติ */}
-        <div style={{ ["--paper-zoom" as string]: paperZoom } as React.CSSProperties} className="paper-zoom w-full min-w-[794px] print:min-w-0 print:w-full mx-auto bg-white shadow-lg print:shadow-none border border-slate-300 print:border-none print-reset">
+<div style={{ width: 794 * paperZoom, height: paperH ? paperH * paperZoom : undefined }} className="paper-scale-outer mx-auto">
+<div ref={paperInnerRef} style={{ width: 794, transform: `scale(${paperZoom})`, transformOrigin: "top left" }} className="paper-scale-inner bg-white shadow-lg print:shadow-none border border-slate-300 print:border-none print-reset">
           <div
             id="printable-area"
             className="font-sarabun text-[16pt] text-black leading-normal w-full p-8 print:p-0 box-border bg-white print-reset"
@@ -4596,6 +4607,7 @@ function ReportView({
               </div>
             )}
           </div>
+        </div>
         </div>
       </div>
     </div>
