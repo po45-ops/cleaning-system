@@ -2952,11 +2952,49 @@ function ReportView({
 
   const currentAcademicWeek = getWeekNumFromDate(new Date());
 
+  // ---- แยกภาคเรียน 1 / 2 อัตโนมัติ: สัปดาห์แรก = สัปดาห์แรกที่มีการตรวจของภาคเรียนนั้น ----
+  const termStartFromData = (() => {
+    const ce = Number(settings.year) - 543;
+    const from = settings.term === "1" ? `${ce}-05-01` : `${ce}-10-16`;
+    const to = settings.term === "1" ? `${ce}-10-15` : `${ce + 1}-04-30`;
+    const keys = inspections
+      .map((item) => formatDateKey(item.date))
+      .filter((key) => key >= from && key <= to)
+      .sort();
+    return normalizeToMonday(keys[0] || from);
+  })();
+
   useEffect(() => {
-    if (currentAcademicWeek >= 1 && currentAcademicWeek <= WEEKS.length) {
-      setSelectedReportWeek(currentAcademicWeek);
+    if (Number.isFinite(Number(settings.year)) && termStartFromData !== settings.semesterStart) {
+      setSettings((current) => ({ ...current, semesterStart: termStartFromData }));
     }
-  }, [settings.semesterStart]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [termStartFromData]);
+
+  // แสดงเฉพาะสัปดาห์ที่มีการตรวจ (ข้ามสัปดาห์ที่เว้น)
+  const availableWeeks = (() => {
+    const ce = Number(settings.year) - 543;
+    const termTo = settings.term === "1" ? `${ce}-10-15` : `${ce + 1}-04-30`;
+    const keys = new Set(
+      inspections.map((item) => formatDateKey(item.date)).filter((key) => key <= termTo)
+    );
+    const weeks = WEEKS.filter((week) =>
+      getWeekDatesForWeek(week).some((day) => keys.has(day))
+    );
+    return weeks.length > 0 ? weeks : [1];
+  })();
+  const availableWeeksKey = availableWeeks.join(",");
+
+  useEffect(() => {
+    if (!availableWeeks.includes(selectedReportWeek)) {
+      const preferred =
+        currentAcademicWeek >= 1 && availableWeeks.includes(currentAcademicWeek)
+          ? currentAcademicWeek
+          : availableWeeks[availableWeeks.length - 1];
+      setSelectedReportWeek(preferred);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableWeeksKey, settings.semesterStart]);
 
   const currentWeekDates = getWeekDatesForWeek(selectedReportWeek);
 
@@ -4093,7 +4131,7 @@ function ReportView({
               {pdfError}
             </div>
           )}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 sm:w-auto">
               <button
                 onClick={() => setReportMode("weekly")}
@@ -4117,14 +4155,31 @@ function ReportView({
               </button>
             </div>
 
+            <div className="inline-flex w-full rounded-xl bg-slate-100 p-1 sm:w-auto">
+              {(["1", "2"] as const).map((term) => (
+                <button
+                  key={term}
+                  type="button"
+                  onClick={() => setSettings({ ...settings, term })}
+                  className={`flex-1 rounded-lg px-4 py-2 text-sm font-bold transition-all sm:flex-none ${
+                    settings.term === term
+                      ? "bg-white text-emerald-700 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  ภาคเรียนที่ {term}
+                </button>
+              ))}
+            </div>
+
             {reportMode === "weekly" && (
               <select
                 aria-label="สัปดาห์ที่แสดง"
                 value={selectedReportWeek}
                 onChange={(e) => setSelectedReportWeek(parseInt(e.target.value))}
-                className="w-full min-w-0 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-[13px] font-bold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500 sm:w-auto sm:text-sm sm:max-w-[320px]"
+                className="w-full min-w-0 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-[13px] font-bold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-500 sm:ml-auto sm:w-auto sm:text-sm sm:max-w-[320px]"
               >
-                {WEEKS.map((week) => {
+                {availableWeeks.map((week) => {
                   const dates = getWeekDatesForWeek(week);
                   return (
                     <option key={week} value={week}>
@@ -4181,29 +4236,7 @@ function ReportView({
               </div>
 
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <label className="col-span-2">
-                  <span className="mb-1 block text-xs font-bold text-slate-600">วันเปิดภาคเรียน (วันจันทร์)</span>
-                  <input
-                    type="date"
-                    value={settings.semesterStart}
-                    onChange={(event) =>
-                      setSettings({ ...settings, semesterStart: normalizeToMonday(event.target.value) })
-                    }
-                    className="w-full min-w-0 rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                  />
-                </label>
-                <label>
-                  <span className="mb-1 block text-xs font-bold text-slate-600">ภาคเรียนที่</span>
-                  <select
-                    value={settings.term}
-                    onChange={(event) => setSettings({ ...settings, term: event.target.value })}
-                    className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm font-bold outline-none focus:border-emerald-500"
-                  >
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                  </select>
-                </label>
-                <label>
+                <label className="col-span-2 md:col-span-1">
                   <span className="mb-1 block text-xs font-bold text-slate-600">ปีการศึกษา</span>
                   <input
                     type="number"
