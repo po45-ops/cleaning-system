@@ -415,7 +415,7 @@ export default function PublicDashboard({
               </span>
             </div>
 
-            <div className="mx-auto grid max-w-md grid-cols-3 gap-2.5 sm:gap-4 lg:max-w-none lg:grid-cols-9 lg:gap-3">
+            <div className="mx-auto grid max-w-md grid-cols-3 gap-2.5 sm:gap-4 md:max-w-none md:gap-4">
               {dashboard.zoneSummaries.map((zone) => {
                 const meta = stateMeta[zone.state];
                 const hasNote = Boolean(zone.record?.notes?.trim());
@@ -426,26 +426,40 @@ export default function PublicDashboard({
                     type="button"
                     onClick={() => setOpenZoneId(zone.id)}
                     aria-label={`${zone.name} ${meta.label}`}
-                    className={`relative flex aspect-square min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl border p-2 text-center transition active:scale-95 hover:shadow-md ${meta.cardClass}`}
+                    className={`group relative flex aspect-square min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl border p-2 text-center shadow-sm transition active:scale-95 hover:-translate-y-0.5 hover:shadow-lg md:aspect-auto md:flex-row md:justify-start md:gap-4 md:rounded-2xl md:px-5 md:py-4 md:text-left ${meta.cardClass}`}
                   >
                     {hasNote && (
                       <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-amber-500" />
                     )}
-                    <span className="text-[13px] font-black leading-tight text-slate-800 sm:text-base">
-                      {zone.name}
-                      {zone.class ? (
-                        <span className="ml-0.5 text-[10px] font-medium text-slate-400 sm:text-xs">
-                          ({zone.class})
-                        </span>
-                      ) : null}
-                    </span>
                     <span
-                      className={`flex h-9 w-9 items-center justify-center rounded-full sm:h-11 sm:w-11 ${meta.iconClass}`}
+                      className={`order-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-4 ring-white/70 transition group-hover:scale-110 sm:h-11 sm:w-11 md:order-1 md:h-12 md:w-12 ${meta.iconClass}`}
                     >
                       <StateIcon state={zone.state} />
                     </span>
-                    <span className={`text-[11px] font-bold sm:text-xs ${meta.textClass}`}>
+                    <span className="order-1 flex min-w-0 flex-col items-center gap-1.5 md:order-2 md:flex-1 md:items-start md:gap-1">
+                      <span className="text-[13px] font-black leading-tight text-slate-800 sm:text-base md:text-lg">
+                        {zone.name}
+                        {zone.class ? (
+                          <span className="ml-0.5 text-[10px] font-medium text-slate-400 sm:text-xs">
+                            ({zone.class})
+                          </span>
+                        ) : null}
+                      </span>
+                      <span
+                        className={`hidden rounded-full bg-white/70 px-2 py-0.5 text-xs font-bold md:inline-block ${meta.textClass}`}
+                      >
+                        {meta.label}
+                      </span>
+                    </span>
+                    <span
+                      className={`order-3 text-[11px] font-bold sm:text-xs md:hidden ${meta.textClass}`}
+                    >
                       {meta.label}
+                    </span>
+                    <span className="order-4 hidden text-lg font-black text-slate-600 md:block">
+                      {zone.record && zone.state !== "pending"
+                        ? `${Number(zone.record.score) || 0}/3`
+                        : ""}
                     </span>
                   </button>
                 );
