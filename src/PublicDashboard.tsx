@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   CalendarDays,
@@ -40,6 +40,7 @@ type PublicDashboardProps = {
   error: string;
   lastUpdated: Date | null;
   onRefresh: () => void;
+  initialOpenZoneId?: number;
 };
 
 type ZoneState = "approved" | "pending" | "failed" | "missing";
@@ -161,7 +162,21 @@ export default function PublicDashboard({
   error,
   lastUpdated,
   onRefresh,
+  initialOpenZoneId,
 }: PublicDashboardProps) {
+  const [openZoneId, setOpenZoneId] = useState<number | null>(
+    initialOpenZoneId ?? null
+  );
+
+  useEffect(() => {
+    if (openZoneId === null) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenZoneId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openZoneId]);
+
   const today = new Date();
   const todayKey = formatDateKey(today);
 
@@ -217,6 +232,11 @@ export default function PublicDashboard({
     };
   }, [inspections, todayKey, zones]);
 
+  const openZone =
+    openZoneId === null
+      ? null
+      : dashboard.zoneSummaries.find((zone) => zone.id === openZoneId) ?? null;
+
   const completionRate = zones.length
     ? Math.round((dashboard.reviewed / zones.length) * 100)
     : 0;
@@ -258,25 +278,25 @@ export default function PublicDashboard({
 
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.07)]">
-      <div className="border-b border-slate-100 px-5 py-5 sm:px-8 sm:py-7">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+      <div className="border-b border-slate-100 px-4 py-3 sm:px-8 sm:py-7">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 text-emerald-700">
+            <div className="hidden items-center gap-2 text-emerald-700 sm:flex">
               <Sparkles className="h-5 w-5" />
               <span className="text-xs font-bold uppercase tracking-[0.16em]">
                 ภาพรวมข้อมูลสด
               </span>
             </div>
-            <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-800 sm:text-3xl">
+            <h2 className="text-lg font-black tracking-tight text-slate-800 sm:mt-1 sm:text-3xl">
               สรุปภาพรวมวันนี้
             </h2>
-            <p className="mt-1 flex items-center gap-2 text-sm text-slate-500">
+            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 sm:mt-1 sm:gap-2 sm:text-sm">
               <CalendarDays className="h-4 w-4" /> {todayLabel}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="hidden rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 sm:block">
               <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
               {lastUpdated
                 ? `อัปเดต ${new Intl.DateTimeFormat("th-TH", {
@@ -290,7 +310,7 @@ export default function PublicDashboard({
               type="button"
               onClick={onRefresh}
               disabled={isLoading}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-wait disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold sm:px-4 text-slate-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-wait disabled:opacity-60"
             >
               <RefreshCw
                 className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
@@ -310,18 +330,18 @@ export default function PublicDashboard({
         )}
       </div>
 
-      <div className="space-y-6 bg-slate-50/50 p-4 sm:p-7">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <article className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
+      <div className="space-y-4 bg-slate-50/50 p-3 sm:space-y-6 sm:p-7">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          <article className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-slate-700">ตรวจเสร็จแล้ว</p>
                 <p className="mt-2 text-3xl font-black text-emerald-600">
                   {dashboard.reviewed}
-                  <span className="text-lg text-slate-400">/{zones.length} เขต</span>
+                  <span className="text-sm text-slate-400 sm:text-lg">/{zones.length} เขต</span>
                 </p>
               </div>
-              <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-600">
+              <div className="hidden rounded-2xl bg-emerald-50 p-3 text-emerald-600 sm:block">
                 <ListChecks className="h-6 w-6" />
               </div>
             </div>
@@ -331,26 +351,24 @@ export default function PublicDashboard({
                 style={{ width: `${completionRate}%` }}
               />
             </div>
-            <p className="mt-2 text-xs text-slate-500">คิดเป็น {completionRate}%</p>
           </article>
 
-          <article className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm">
+          <article className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-slate-700">รออนุมัติ</p>
                 <p className="mt-2 text-3xl font-black text-amber-500">
                   {dashboard.pending}
-                  <span className="text-lg text-slate-400"> รายการ</span>
+                  
                 </p>
-                <p className="mt-3 text-xs text-slate-500">รอครูตรวจสอบผล</p>
               </div>
-              <div className="rounded-2xl bg-amber-50 p-3 text-amber-500">
+              <div className="hidden rounded-2xl bg-amber-50 p-3 text-amber-500 sm:block">
                 <Clock className="h-6 w-6" />
               </div>
             </div>
           </article>
 
-          <article className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
+          <article className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-slate-700">คะแนนเฉลี่ย</p>
@@ -358,31 +376,25 @@ export default function PublicDashboard({
                   {dashboard.average === null
                     ? "–"
                     : dashboard.average.toFixed(1)}
-                  <span className="text-lg text-slate-400">/3</span>
-                </p>
-                <p className="mt-3 text-xs text-slate-500">
-                  จากรายการที่ตรวจแล้ว
+                  <span className="text-base text-slate-400 sm:text-lg">/3</span>
                 </p>
               </div>
-              <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-600">
+              <div className="hidden rounded-2xl bg-emerald-50 p-3 text-emerald-600 sm:block">
                 <Star className="h-6 w-6" />
               </div>
             </div>
           </article>
 
-          <article className="rounded-2xl border border-rose-100 bg-white p-5 shadow-sm">
+          <article className="rounded-2xl border border-rose-100 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-bold text-slate-700">ไม่ผ่าน</p>
                 <p className="mt-2 text-3xl font-black text-rose-500">
                   {dashboard.failed}
-                  <span className="text-lg text-slate-400"> เขต</span>
-                </p>
-                <p className="mt-3 text-xs text-slate-500">
-                  {dashboard.failed ? "ต้องดำเนินการปรับปรุง" : "ไม่พบรายการที่ต้องแก้ไข"}
+                  
                 </p>
               </div>
-              <div className="rounded-2xl bg-rose-50 p-3 text-rose-500">
+              <div className="hidden rounded-2xl bg-rose-50 p-3 text-rose-500 sm:block">
                 <XCircle className="h-6 w-6" />
               </div>
             </div>
@@ -391,105 +403,56 @@ export default function PublicDashboard({
 
         <div className="grid grid-cols-1 gap-6">
           <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-            <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="mb-3 flex items-center justify-between gap-2">
               <div className="flex items-center gap-3">
                 <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-600">
                   <MapIcon className="h-5 w-5" />
                 </div>
-                <div>
-                  <h3 className="font-black text-slate-800">สถานะพื้นที่ตรวจวันนี้</h3>
-                  <p className="text-xs text-slate-500">
-                    สถานะล่าสุดพร้อมสรุปคะแนนและหมายเหตุของแต่ละเขตในจุดเดียว
-                  </p>
-                </div>
+                <h3 className="whitespace-nowrap font-black text-slate-800">สถานะพื้นที่ตรวจวันนี้</h3>
               </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+              <span className="whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">
                 ส่งแล้ว {zones.length - dashboard.missing}/{zones.length}
               </span>
             </div>
 
-            <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50/50 px-4 py-3 text-sm leading-relaxed text-slate-700">
-              <span className="font-black text-emerald-700">ภาพรวมวันนี้:</span>{" "}
-              ตรวจเสร็จแล้ว {dashboard.reviewed} จาก {zones.length} เขต
-              {dashboard.pending > 0 ? ` · รออนุมัติ ${dashboard.pending} เขต` : ""}
-              {dashboard.failed > 0 ? ` · ไม่ผ่าน ${dashboard.failed} เขต` : ""}
-              {dashboard.missing > 0 ? ` · ยังไม่บันทึก ${dashboard.missing} เขต` : ""}
-              {dashboard.average !== null
-                ? ` · คะแนนเฉลี่ย ${dashboard.average.toFixed(1)}/3`
-                : ""}
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mx-auto grid max-w-2xl grid-cols-3 gap-2.5 sm:gap-4">
               {dashboard.zoneSummaries.map((zone) => {
                 const meta = stateMeta[zone.state];
-                const note = zone.record?.notes?.trim();
-                const needsReason =
-                  Boolean(zone.record) && Number(zone.record?.score) < 3;
+                const hasNote = Boolean(zone.record?.notes?.trim());
 
                 return (
-                  <div
+                  <button
                     key={zone.id}
-                    className={`rounded-2xl border p-4 transition-colors ${meta.cardClass}`}
+                    type="button"
+                    onClick={() => setOpenZoneId(zone.id)}
+                    aria-label={`${zone.name} ${meta.label}`}
+                    className={`relative flex aspect-square min-w-0 flex-col items-center justify-center gap-1.5 rounded-2xl border p-2 text-center transition active:scale-95 hover:shadow-md ${meta.cardClass}`}
                   >
-                    <div className="flex items-start gap-3">
-                      <div
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${meta.iconClass}`}
-                      >
-                        <StateIcon state={zone.state} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="truncate font-black text-slate-800">
-                            {zone.name}
-                            {zone.class ? (
-                              <span className="ml-1 text-xs font-medium text-slate-400">
-                                ({zone.class})
-                              </span>
-                            ) : null}
-                          </p>
-                          <span className={`shrink-0 text-[11px] font-bold ${meta.textClass}`}>
-                            {meta.label}
-                          </span>
-                        </div>
-                        <p className={`mt-0.5 text-xs font-bold ${meta.textClass}`}>
-                          {zone.record && zone.state !== "pending"
-                            ? `คะแนน ${Number(zone.record.score) || 0}/3`
-                            : zone.state === "pending"
-                              ? "รอตรวจสอบผล"
-                              : "ยังไม่มีผลวันนี้"}
-                        </p>
-                        <p className="mt-2 text-xs leading-relaxed text-slate-600">
-                          {getZonePublicSummary(zone)}
-                        </p>
-
-                        {note ? (
-                          <div className="mt-3 rounded-xl border border-amber-200/80 bg-white/85 px-3 py-2.5 shadow-sm">
-                            <div className="mb-1 flex items-center gap-1.5 text-amber-700">
-                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                              <span className="text-[11px] font-black">
-                                หมายเหตุ / ปัญหาที่พบ
-                              </span>
-                            </div>
-                            <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">
-                              {note}
-                            </p>
-                          </div>
-                        ) : needsReason ? (
-                          <div className="mt-3 rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-[11px] leading-relaxed text-slate-500">
-                            <span className="font-bold text-slate-600">
-                              หมายเหตุ / ปัญหาที่พบ:
-                            </span>{" "}
-                            ยังไม่ได้ระบุรายละเอียดสาเหตุที่ได้คะแนนต่ำกว่า 3
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
+                    {hasNote && (
+                      <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-amber-500" />
+                    )}
+                    <span className="text-[13px] font-black leading-tight text-slate-800 sm:text-base">
+                      {zone.name}
+                      {zone.class ? (
+                        <span className="ml-0.5 text-[10px] font-medium text-slate-400 sm:text-xs">
+                          ({zone.class})
+                        </span>
+                      ) : null}
+                    </span>
+                    <span
+                      className={`flex h-9 w-9 items-center justify-center rounded-full sm:h-11 sm:w-11 ${meta.iconClass}`}
+                    >
+                      <StateIcon state={zone.state} />
+                    </span>
+                    <span className={`text-[11px] font-bold sm:text-xs ${meta.textClass}`}>
+                      {meta.label}
+                    </span>
+                  </button>
                 );
               })}
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-100 pt-4 text-xs text-slate-500">
+            <div className="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-2 border-t border-slate-100 pt-3 text-xs text-slate-500">
               {(
                 ["approved", "pending", "failed", "missing"] as ZoneState[]
               ).map((state) => (
@@ -513,9 +476,66 @@ export default function PublicDashboard({
 
         </div>
 
-        <p className="text-center text-xs text-slate-400">
-          ระบบอัปเดตข้อมูลอัตโนมัติทุก 30 วินาทีจากฐานข้อมูลกลาง
-        </p>
+        {openZone && (
+          <div
+            className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4"
+            onClick={() => setOpenZoneId(null)}
+            role="presentation"
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={openZone.name}
+              onClick={(event) => event.stopPropagation()}
+              className="w-full max-w-md rounded-t-3xl bg-white p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl sm:rounded-3xl"
+            >
+              <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-300 sm:hidden" />
+              <div className="mb-4 flex items-center gap-3">
+                <span
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${stateMeta[openZone.state].iconClass}`}
+                >
+                  <StateIcon state={openZone.state} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-lg font-black text-slate-800">
+                    {openZone.name}
+                    {openZone.class ? (
+                      <span className="ml-1 text-sm font-medium text-slate-400">
+                        ({openZone.class})
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className={`text-sm font-bold ${stateMeta[openZone.state].textClass}`}>
+                    {stateMeta[openZone.state].label}
+                  </p>
+                </div>
+              </div>
+              <dl className="space-y-2 text-sm">
+                <div className="flex justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                  <dt className="font-bold text-slate-500">คะแนน</dt>
+                  <dd className="font-black text-slate-800">
+                    {openZone.record && openZone.state !== "pending"
+                      ? `${Number(openZone.record.score) || 0}/3`
+                      : "–"}
+                  </dd>
+                </div>
+                <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+                  <dt className="mb-0.5 font-bold text-slate-500">หมายเหตุ</dt>
+                  <dd className="whitespace-pre-wrap break-words text-slate-800">
+                    {openZone.record?.notes?.trim() || "ไม่มี"}
+                  </dd>
+                </div>
+              </dl>
+              <button
+                type="button"
+                onClick={() => setOpenZoneId(null)}
+                className="mt-4 w-full rounded-xl bg-emerald-600 py-3 font-bold text-white transition hover:bg-emerald-700"
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

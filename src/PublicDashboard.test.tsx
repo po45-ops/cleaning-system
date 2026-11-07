@@ -45,6 +45,7 @@ describe("PublicDashboard", () => {
         error=""
         lastUpdated={new Date("2026-08-26T08:30:00+07:00")}
         onRefresh={() => undefined}
+        initialOpenZoneId={1}
       />
     );
     const text = html.replace(/<[^>]*>/g, "");

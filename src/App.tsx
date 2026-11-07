@@ -1561,7 +1561,7 @@ function LoginScreen({
               </div>
               {!adminCredential && (
                 <p className="mt-2 text-xs text-amber-700">
-                  ใช้งานครั้งแรกบนอุปกรณ์นี้: กรุณาตั้งรหัสใหม่อย่างน้อย {MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษร ระบบจะเก็บเฉพาะค่า hash บนเครื่องนี้
+                  ตั้งรหัสผ่านใหม่ อย่างน้อย {MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษร
                 </p>
               )}
             </div>
@@ -1574,9 +1574,6 @@ function LoginScreen({
           >
             {isChecking ? "กำลังตรวจสอบ..." : "เข้าสู่ระบบ"}
           </button>
-          <p className="text-center text-[11px] leading-relaxed text-slate-400">
-            การล็อกอินนี้เป็นเพียงการกั้นหน้าจอบนอุปกรณ์ จนกว่า API ฝั่งเซิร์ฟเวอร์จะเปิดใช้ระบบยืนยันตัวตน
-          </p>
         </form>
 
         <button
@@ -1753,8 +1750,7 @@ function StudentForm({ onSave, inspections }: StudentFormProps) {
           <div className="space-y-2">
             {isReplacingExisting && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                <span className="font-bold">พบรายการเดิม:</span> เมื่อกดบันทึก
-                ระบบจะถือข้อมูลและรูปภาพชุดใหม่นี้เป็นรายการล่าสุดแทนชุดเดิม
+                <span className="font-bold">มีรายการเดิมอยู่แล้ว</span> การบันทึกจะแทนที่ชุดเดิม
               </div>
             )}
             <div className="bg-slate-50 p-3 rounded-lg border text-sm text-slate-600">
@@ -2038,9 +2034,6 @@ function InspectionCalendar({
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">ปฏิทินการตรวจเวร</h2>
-                  <p className="text-emerald-100 text-sm">
-                    ตรวจสอบวันที่และเขตพื้นที่ที่ยังบันทึกไม่ครบ
-                  </p>
                 </div>
               </div>
             </div>
@@ -2240,13 +2233,11 @@ function InspectionCalendar({
             <div className="p-8 text-center text-slate-500">
               <Clock className="w-10 h-10 mx-auto mb-3 text-slate-300" />
               <p className="font-bold">วันเสาร์–อาทิตย์เป็นวันหยุด</p>
-              <p className="text-sm mt-1">ระบบไม่นับเป็นวันที่ต้องตรวจเวร</p>
             </div>
           ) : selectedInfo.isFuture ? (
             <div className="p-8 text-center text-slate-500">
               <CalendarDays className="w-10 h-10 mx-auto mb-3 text-slate-300" />
               <p className="font-bold">ยังไม่ถึงกำหนดตรวจ</p>
-              <p className="text-sm mt-1">กลับมาตรวจสอบได้เมื่อถึงวันดังกล่าว</p>
             </div>
           ) : (
             <div className="p-4 max-h-[540px] overflow-y-auto">
@@ -3905,10 +3896,7 @@ function ReportView({
               <span className="mb-3 inline-flex items-center gap-1 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold">
                 <Sparkles className="h-3.5 w-3.5" /> ศูนย์รายงานและส่งออก
               </span>
-              <h2 className="text-2xl font-bold">รายงานพร้อมพิมพ์ ใช้ได้ทันที</h2>
-              <p className="mt-1 max-w-2xl text-sm text-emerald-50">
-                Word และ PDF เป็นไฟล์มาตรฐาน พร้อมจัดแนวกระดาษและหัวตารางให้เหมาะกับรายงานแต่ละแบบ
-              </p>
+              <h2 className="text-2xl font-bold">รายงาน</h2>
             </div>
             <div className="grid grid-cols-3 gap-2 lg:min-w-[420px]">
               <button
@@ -4039,9 +4027,6 @@ function ReportView({
                 <p className="text-sm font-bold text-slate-800">
                   ตราโรงเรียน / รูปส่วนหัวรายงาน
                 </p>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  รูปนี้จะแสดงที่ส่วนหัวระบบ หน้าเข้าสู่ระบบ และไฟล์รายงาน PDF/Word
-                </p>
               </div>
               <div className="flex gap-2">
                 <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700">
@@ -4118,10 +4103,7 @@ function ReportView({
             <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
               <TableProperties className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
               <div>
-                <p className="font-bold">แก้คะแนนได้จากตารางตัวอย่างด้านล่าง</p>
-                <p className="mt-0.5 text-xs text-blue-700">
-                  ทุกช่องเลือกคะแนน 0–3 ได้ รวมช่องว่างสีเขียว เมื่อบันทึกแล้วระบบจะอนุมัติและอัปเดตปฏิทินอัตโนมัติ
-                </p>
+                <p className="font-bold">แตะช่องในตารางเพื่อแก้คะแนน (0–3)</p>
               </div>
             </div>
           )}
@@ -4774,8 +4756,8 @@ function UserManagement({
         </h2>
         <p className="mb-5 pl-0 text-sm leading-relaxed text-slate-500 md:pl-[52px]">
           {adminCredential
-            ? "กรอกรหัสปัจจุบันก่อนตั้งรหัสใหม่ การเปลี่ยนแปลงจะมีผลกับการเข้าสู่ระบบครั้งถัดไปบนอุปกรณ์นี้"
-            : `ตั้งรหัสผ่านแอดมินอย่างน้อย ${MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษรสำหรับอุปกรณ์นี้`}
+            ? "กรอกรหัสปัจจุบัน แล้วตั้งรหัสใหม่"
+            : `ตั้งรหัสผ่านอย่างน้อย ${MIN_ADMIN_PASSWORD_LENGTH} ตัวอักษร`}
         </p>
         {adminMessage && (
           <p className="mb-5 rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-3 text-sm font-bold text-amber-800">
