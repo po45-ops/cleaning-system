@@ -3300,7 +3300,7 @@ function ReportView({
   // ส่งออก Word (.docx)
   // ใช้หัวเรื่อง ป้ายชื่อ และผู้ลงนามชุดเดียวกับ PDF เพื่อให้สองไฟล์ตรงกัน
   // ---------------------------------------------------------------------------
-  const WORD_FONT = "Tahoma";
+  const WORD_FONT = "TH SarabunPSK";
   // A4 = 11906 x 16838 twips, ขอบ 0.5 นิ้ว (720) ทุกด้าน
   const WORD_PAGE_MARGIN = 720;
   const WORD_CONTENT_WIDTH = 11906 - WORD_PAGE_MARGIN * 2;
@@ -3411,11 +3411,20 @@ function ReportView({
     });
   };
 
-  const createWordSignature = (docx: DocxModule, name: string, role: string) => [
-    wordText(docx, "ลงชื่อ ..............................", { size: 24, after: 320 }),
-    wordText(docx, `( ${name || "........................................"} )`, { size: 24, after: 80 }),
-    wordText(docx, role, { bold: true, size: 24 }),
-  ];
+  const splitRank = (full: string) => {
+    const m = (full || "").trim().match(/^((?:ว่าที่\s*)?(?:ร\.[ตทอ]\.|พ\.[ตทอ]\.|ด\.[ตทอ]\.|นาย|นาง(?:สาว)?|ดร\.|ผศ\.|รศ\.|ศ\.)(?:\s*หญิง)?)\s+(.+)$/);
+    return m ? { rank: m[1].replace(/\s+/g, " "), name: m[2] } : { rank: "", name: (full || "").trim() };
+  };
+
+  const createWordSignature = (docx: DocxModule, name: string, role: string, withRank = false) => {
+    const { rank, name: bare } = withRank ? splitRank(name) : { rank: "", name: name };
+    const first = rank ? `${rank} ........................................` : "ลงชื่อ ..............................";
+    return [
+      wordText(docx, first, { size: 32, after: 320 }),
+      wordText(docx, `( ${bare || "........................................"} )`, { size: 32, after: 80 }),
+      wordText(docx, role, { bold: true, size: 32 }),
+    ];
+  };
 
   const getSemesterSummary = () => {
     const counts = { excellent: 0, good: 0, fair: 0, improve: 0 };
@@ -3483,7 +3492,7 @@ function ReportView({
                   italics: true,
                   color: "64748B",
                   font: WORD_FONT,
-                  size: 26,
+                  size: 32,
                 }),
               ],
         }),
@@ -3525,23 +3534,23 @@ function ReportView({
           new Paragraph({
             alignment: AlignmentType.CENTER,
             children: [
-              new TextRun({ text: "ตารางบันทึกการปฏิบัติงาน", bold: true, font: WORD_FONT, size: 36 }),
-              new TextRun({ text: "ทำความสะอาดเขตพื้นที่รับผิดชอบ", bold: true, font: WORD_FONT, size: 36, break: 1 }),
+              new TextRun({ text: "ตารางบันทึกการปฏิบัติงาน", bold: true, font: WORD_FONT, size: 40 }),
+              new TextRun({ text: "ทำความสะอาดเขตพื้นที่รับผิดชอบ", bold: true, font: WORD_FONT, size: 40, break: 1 }),
             ],
           }),
-          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 32, before: 80 }),
+          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 36, before: 80 }),
           wordText(
             docx,
             `ประจำสัปดาห์ที่ ${selectedReportWeek} (ระหว่างวันที่ ${formatThaiDateShort(
               currentWeekDates[0]
             )} – ${formatThaiDateShort(currentWeekDates[4])})`,
-            { bold: true, size: 26, before: 120, after: 320 }
+            { bold: true, size: 32, before: 120, after: 320 }
           )
         );
       } else {
         children.push(
-          wordText(docx, "แบบสรุปผลการประเมินรายภาคเรียน", { bold: true, size: 44 }),
-          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 40 }),
+          wordText(docx, "แบบสรุปผลการประเมินรายภาคเรียน", { bold: true, size: 48 }),
+          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 44 }),
           wordText(
             docx,
             `ประจำภาคเรียนที่ ${settings.term} ปีการศึกษา ${settings.year}`,
@@ -3601,7 +3610,7 @@ function ReportView({
       const cellSize = isWeekly ? 26 : 26;
       const cellPadding = isWeekly ? 110 : 0;
       const rowHeight = isWeekly ? { value: 700, rule: docx.HeightRule.ATLEAST } : undefined;
-      const cellLine = isWeekly ? undefined : 290;
+      const cellLine = isWeekly ? undefined : 340;
       children.push(
         new Table({
           width: { size: WORD_CONTENT_WIDTH, type: WidthType.DXA },
@@ -3657,7 +3666,7 @@ function ReportView({
             { width: third, children: createWordSignature(docx, settings.teacher, "ครูกิจการและพัฒนานักเรียน") },
             {
               width: WORD_CONTENT_WIDTH - third * 2,
-              children: createWordSignature(docx, settings.director, "ผู้อำนวยการโรงเรียนไตรธารวิทยา"),
+              children: createWordSignature(docx, settings.director, "ผู้อำนวยการโรงเรียนไตรธารวิทยา", true),
             },
           ])
         );
@@ -3678,15 +3687,15 @@ function ReportView({
                   borders: { top: line, bottom: line, left: line, right: line },
                   margins: { top: 100, bottom: 100, left: 140, right: 140 },
                   children: [
-                    wordText(docx, "สรุปผล:", { bold: true, size: 28, align: left, after: 40 }),
+                    wordText(docx, "สรุปผล:", { bold: true, size: 32, align: left, after: 40 }),
                     ...summary.map((item) =>
                       wordText(docx, `${item.label}    ${item.count} ห้อง (${item.share}%)`, {
-                        size: 28,
+                        size: 32,
                         align: left,
                       })
                     ),
-                    wordText(docx, "หมายเหตุ :", { bold: true, size: 28, align: left, before: 80 }),
-                    wordText(docx, SEMESTER_AWARD_NOTE, { size: 26, align: left }),
+                    wordText(docx, "หมายเหตุ :", { bold: true, size: 32, align: left, before: 80 }),
+                    wordText(docx, SEMESTER_AWARD_NOTE, { size: 32, align: left }),
                   ],
                 }),
               ],
@@ -3720,7 +3729,7 @@ function ReportView({
                 text: `ภาคผนวก: ภาพถ่ายหลักฐานประกอบการตรวจ (สัปดาห์ที่ ${selectedReportWeek})`,
                 bold: true,
                 font: WORD_FONT,
-                size: 36,
+                size: 40,
               }),
             ],
           })
@@ -3750,14 +3759,14 @@ function ReportView({
                   )})    คะแนน: ${item.score}/3`,
                   bold: true,
                   font: WORD_FONT,
-                  size: 30,
+                  size: 32,
                 }),
                 ...(item.notes
                   ? [
                       new TextRun({
                         text: `    หมายเหตุ: ${String(item.notes).trim()}`,
                         font: WORD_FONT,
-                        size: 28,
+                        size: 32,
                       }),
                     ]
                   : []),
@@ -3789,7 +3798,7 @@ function ReportView({
 
       const documentFile = new Document({
         styles: {
-          default: { document: { run: { font: WORD_FONT, size: 30 } } },
+          default: { document: { run: { font: WORD_FONT, size: 32 } } },
         },
         sections: [
           {
@@ -3808,7 +3817,29 @@ function ReportView({
           },
         ],
       });
-      const blob = await Packer.toBlob(documentFile);
+      let blob: Blob = await Packer.toBlob(documentFile);
+      try {
+        // ใส่ชื่อฟอนต์สำรอง (TH Sarabun PSK) ให้ Word หาฟอนต์เจอทั้งสองชื่อ
+        const { default: JSZip } = await import("jszip");
+        const zip = await JSZip.loadAsync(blob);
+        const entry = zip.file("word/fontTable.xml");
+        if (entry) {
+          let xml = await entry.async("string");
+          if (!xml.includes('w:name="TH SarabunPSK"')) {
+            xml = xml.replace(
+              "</w:fonts>",
+              '<w:font w:name="TH SarabunPSK"><w:altName w:val="TH Sarabun PSK"/><w:charset w:val="DE"/><w:family w:val="swiss"/><w:pitch w:val="variable"/></w:font></w:fonts>'
+            );
+            zip.file("word/fontTable.xml", xml);
+            blob = await zip.generateAsync({
+              type: "blob",
+              mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            });
+          }
+        }
+      } catch (fontError) {
+        console.warn("font alias skipped", fontError);
+      }
       downloadBlob(blob, reportFileName("docx"));
       if (missingImages > 0) {
         setExportNotice(
@@ -4496,12 +4527,14 @@ function ReportView({
                   </div>
                   <div className="flex flex-col items-center flex-1">
                     <div className="mb-4">
-                      ลงชื่อ ..........................................
+                      {splitRank(settings.director).rank
+                        ? `${splitRank(settings.director).rank} ..........................................`
+                        : "ลงชื่อ .........................................."}
                     </div>
                     <div className="mb-1">
                       (
-                      {settings.director
-                        ? ` ${settings.director} `
+                      {splitRank(settings.director).name
+                        ? ` ${splitRank(settings.director).name} `
                         : "........................................"}
                       )
                     </div>
