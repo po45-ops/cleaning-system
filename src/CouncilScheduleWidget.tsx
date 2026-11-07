@@ -1071,19 +1071,20 @@ export default function CouncilScheduleWidget(): React.ReactElement | null {
                 </div>
 
                 <div className="md:hidden">
-                  <div className="flex gap-2 overflow-x-auto px-3 pb-1 pt-3">
+                  <div className="grid gap-1.5 px-3 pb-1 pt-3" style={{ gridTemplateColumns: `repeat(${Math.max(schedule.weeks.length, 1)}, minmax(0, 1fr))` }}>
                     {schedule.weeks.map((week, index) => (
                       <button
                         key={week.id}
                         type="button"
                         onClick={() => setWeekIdx(index)}
-                        className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold transition ${
+                        className={`flex flex-col items-center rounded-xl px-1 py-1.5 leading-tight transition ${
                           weekIdx === index
                             ? "bg-indigo-600 text-white shadow"
                             : "bg-slate-100 text-slate-600"
                         }`}
                       >
-                        {week.label}
+                        <span className="text-[10px] font-medium opacity-80">สัปดาห์</span>
+                        <span className="text-base font-bold">{index + 1}</span>
                       </button>
                     ))}
                   </div>
