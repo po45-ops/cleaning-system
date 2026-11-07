@@ -3892,19 +3892,10 @@ function ReportView({
               </span>
               <h2 className="text-2xl font-bold">รายงานพร้อมพิมพ์ ใช้ได้ทันที</h2>
               <p className="mt-1 max-w-2xl text-sm text-emerald-50">
-                Word, PDF และ Excel เป็นไฟล์มาตรฐาน พร้อมจัดแนวกระดาษและหัวตารางให้เหมาะกับรายงานแต่ละแบบ
+                Word และ PDF เป็นไฟล์มาตรฐาน พร้อมจัดแนวกระดาษและหัวตารางให้เหมาะกับรายงานแต่ละแบบ
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[560px]">
-              <button
-                onClick={exportToExcel}
-                disabled={Boolean(exporting)}
-                className="group rounded-xl border border-white/20 bg-white p-3 text-left text-slate-800 shadow-lg transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
-              >
-                <FileSpreadsheet className="mb-2 h-5 w-5 text-emerald-600" />
-                <span className="block text-sm font-bold">Excel</span>
-                <span className="hidden text-[11px] text-slate-500 sm:block">ไฟล์ .xlsx</span>
-              </button>
+            <div className="grid grid-cols-3 gap-2 lg:min-w-[420px]">
               <button
                 onClick={exportToWord}
                 disabled={Boolean(exporting)}
