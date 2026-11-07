@@ -3040,10 +3040,20 @@ function ReportView({
       return dateCompare || Number(left.zoneId) - Number(right.zoneId);
     });
 
-  const reportFileName = (extension: string): string =>
-    `รายงานตรวจเวร_${
-      reportMode === "weekly" ? `สัปดาห์_${selectedReportWeek}` : "ภาคเรียน"
-    }.${extension}`;
+  const getWeekRecords = (week: number) =>
+    approvedData
+      .filter((item) => getWeekNumFromDate(item.date) === week)
+      .sort((left, right) => {
+        const dateCompare = formatDateKey(left.date).localeCompare(formatDateKey(right.date));
+        return dateCompare || Number(left.zoneId) - Number(right.zoneId);
+      });
+
+  const reportFileName = (extension: string, allWeeks = false): string =>
+    allWeeks
+      ? `รายงานตรวจเวร_ภาคเรียนที่${settings.term}_ปี${settings.year}_ทุกสัปดาห์.${extension}`
+      : `รายงานตรวจเวร_${
+          reportMode === "weekly" ? `สัปดาห์_${selectedReportWeek}` : "ภาคเรียน"
+        }.${extension}`;
 
   const downloadBlob = (blob: Blob, filename: string): void => {
     const url = URL.createObjectURL(blob);
@@ -3500,8 +3510,8 @@ function ReportView({
     });
   };
 
-  const exportToWord = async () => {
-    setExporting("word");
+  const exportToWord = async (allWeeks = false) => {
+    setExporting(allWeeks ? "word-all" : "word");
     setExportNotice("");
     try {
       const docx = await import("docx");
@@ -3512,10 +3522,26 @@ function ReportView({
 
       const children: Array<WordParagraph | WordTable> = [];
 
-      // --- ส่วนหัว: ตรา + ชื่อรายงาน (ข้อความเดียวกับ PDF) ---
       const logoImage = schoolLogo
         ? await loadReportImage(schoolLogo, { keepTransparency: true })
         : null;
+      const weeksToExport: number[] = isWeekly
+        ? allWeeks
+          ? availableWeeks
+          : [selectedReportWeek]
+        : [0];
+      for (const [weekIndex, week] of weeksToExport.entries()) {
+      const weekDates = getWeekDatesForWeek(week);
+      const weekRecords = getWeekRecords(week);
+      if (weekIndex > 0) {
+        children.push(
+          new Paragraph({
+            pageBreakBefore: true,
+            spacing: { before: 0, after: 0, line: 20, lineRule: docx.LineRuleType.EXACT },
+            children: [new TextRun({ text: "", size: 2 })],
+          })
+        );
+      }
       const logoRun = createWordImageRun(docx, logoImage, {
         maxWidth: isWeekly ? 90 : 60,
         maxHeight: isWeekly ? 90 : 60,
@@ -3541,9 +3567,9 @@ function ReportView({
           wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 36, before: 80 }),
           wordText(
             docx,
-            `ประจำสัปดาห์ที่ ${selectedReportWeek} (ระหว่างวันที่ ${formatThaiDateShort(
-              currentWeekDates[0]
-            )} – ${formatThaiDateShort(currentWeekDates[4])})`,
+            `ประจำสัปดาห์ที่ ${week} (ระหว่างวันที่ ${formatThaiDateShort(
+              weekDates[0]
+            )} – ${formatThaiDateShort(weekDates[4])})`,
             { bold: true, size: 32, before: 120, after: 320 }
           )
         );
@@ -3576,7 +3602,7 @@ function ReportView({
 
       const dataRows: Array<Array<string | number>> = isWeekly
         ? ZONES.map((zone) => {
-            const scores = currentWeekDates.map((date) => {
+            const scores = weekDates.map((date) => {
               const record = approvedData.find(
                 (item) => Number(item.zoneId) === zone.id && formatDateKey(item.date) === date
               );
@@ -3726,7 +3752,7 @@ function ReportView({
             spacing: { after: 120 },
             children: [
               new TextRun({
-                text: `ภาคผนวก: ภาพถ่ายหลักฐานประกอบการตรวจ (สัปดาห์ที่ ${selectedReportWeek})`,
+                text: `ภาคผนวก: ภาพถ่ายหลักฐานประกอบการตรวจ (สัปดาห์ที่ ${week})`,
                 bold: true,
                 font: WORD_FONT,
                 size: 40,
@@ -3734,18 +3760,18 @@ function ReportView({
             ],
           })
         );
-        if (!weeklyReportData.length) {
+        if (!weekRecords.length) {
           children.push(wordText(docx, "ไม่มีข้อมูลรูปภาพในสัปดาห์นี้"));
         }
 
         // เริ่มโหลดรูปทั้งหมดก่อน (ตัวโหลดคุมจำนวนพร้อมกันเอง) แล้วค่อยประกอบตามลำดับ
         const photoWidth = Math.floor(WORD_CONTENT_WIDTH / 3);
-        const imageJobs = weeklyReportData.map((item) =>
+        const imageJobs = weekRecords.map((item) =>
           (Array.isArray(item.images) ? item.images.slice(0, 3) : []).map((source) =>
             loadReportImage(String(source))
           )
         );
-        for (const [index, item] of weeklyReportData.entries()) {
+        for (const [index, item] of weekRecords.entries()) {
           const zone = ZONES.find((zoneItem) => zoneItem.id === Number(item.zoneId));
           children.push(
             new Paragraph({
@@ -3795,6 +3821,7 @@ function ReportView({
           );
         }
       }
+      }
 
       const documentFile = new Document({
         styles: {
@@ -3840,7 +3867,7 @@ function ReportView({
       } catch (fontError) {
         console.warn("font alias skipped", fontError);
       }
-      downloadBlob(blob, reportFileName("docx"));
+      downloadBlob(blob, reportFileName("docx", allWeeks));
       if (missingImages > 0) {
         setExportNotice(
           `สร้างไฟล์ Word แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (แสดงเป็น "ไม่มีรูปภาพ") รอสักครู่แล้วกดส่งออกใหม่ได้`
@@ -3896,13 +3923,14 @@ function ReportView({
     window.setTimeout(() => window.print(), 50);
   };
 
-  const printReport = async () => {
+  const printReport = async (allWeeks = false) => {
     const element = document.getElementById("printable-area");
     if (!element) return;
+    const originalWeek = selectedReportWeek;
     setPdfError("");
     setExportNotice("");
     setIsPrinting(true);
-    setExporting("pdf");
+    setExporting(allWeeks ? "pdf-all" : "pdf");
     let holder: HTMLDivElement | null = null;
     try {
       const { default: html2pdf } = await import("html2pdf.js");
@@ -3913,7 +3941,17 @@ function ReportView({
         console.warn("Unable to preload TH Sarabun PSK", fontError);
       }
 
-      const exportNode = element.cloneNode(true) as HTMLElement;
+      let missingImages = 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let sharedPdf: any = null;
+      const weeksToRender: Array<number | null> = allWeeks ? availableWeeks : [null];
+      for (const [weekIndex, weekValue] of weeksToRender.entries()) {
+        if (weekValue !== null) {
+          setSelectedReportWeek(weekValue);
+          await new Promise((resolve) => window.setTimeout(resolve, 350));
+        }
+        const pageElement = document.getElementById("printable-area") || element;
+      const exportNode = pageElement.cloneNode(true) as HTMLElement;
       exportNode.classList.add("pdf-export-node");
       exportNode
         .querySelectorAll(".screen-only")
@@ -3925,6 +3963,7 @@ function ReportView({
       exportNode.querySelectorAll(".print-only").forEach((node) => {
         node.classList.remove("hidden", "print:block", "print:inline");
       });
+      holder?.remove();
       holder = document.createElement("div");
       holder.style.position = "fixed";
       holder.style.left = "0";
@@ -3938,7 +3977,7 @@ function ReportView({
 
       // แทนรูปทุกใบด้วยข้อมูลที่โหลดไว้แล้ว (คุมการโหลดพร้อมกัน + ลองใหม่เมื่อ Google จำกัด)
       // ไม่ให้ html2canvas ไปดึงรูปจากเน็ตเองตอนวาด ซึ่งเป็นสาเหตุรูปหาย/ช่องว่างขาว
-      let missingImages = 0;
+      
       await Promise.all(
         Array.from(exportNode.querySelectorAll("img")).map(async (img) => {
           const source = img.getAttribute("src") || "";
@@ -3982,7 +4021,23 @@ function ReportView({
         },
       };
 
-      await html2pdf().set(opt).from(exportNode).save();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const worker: any = html2pdf().set(opt).from(exportNode);
+      if (sharedPdf) {
+        // ต่อหน้าถัดไปในไฟล์เดียวกัน (เริ่มหน้าใหม่ก่อนวาดสัปดาห์นี้)
+        sharedPdf.addPage();
+        await worker.then(function (this: { prop: { pdf: unknown } }) {
+          this.prop.pdf = sharedPdf;
+        });
+      }
+      sharedPdf = await worker.toPdf().get("pdf");
+      void weekIndex;
+      }
+      if (allWeeks && sharedPdf) {
+        sharedPdf.save(reportFileName("pdf", true));
+      } else if (sharedPdf) {
+        sharedPdf.save(reportFileName("pdf"));
+      }
       if (missingImages > 0) {
         setExportNotice(
           `สร้างไฟล์ PDF แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (แสดงเป็น "ไม่มีรูปภาพ") รอสักครู่แล้วกดส่งออกใหม่ได้`
@@ -3994,6 +4049,7 @@ function ReportView({
       setPdfError("สร้างไฟล์ PDF ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง หรือส่งออกเป็น Word");
     } finally {
       holder?.remove();
+      if (allWeeks) setSelectedReportWeek(originalWeek);
       setIsPrinting(false);
       setExporting("");
     }
@@ -4116,14 +4172,14 @@ function ReportView({
           </h2>
           <div className="flex items-center gap-1 sm:gap-2">
             <button
-              onClick={exportToWord}
+              onClick={() => void exportToWord()}
               disabled={Boolean(exporting)}
               className="inline-flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-2 text-[13px] sm:px-3 sm:text-sm font-bold text-slate-800 shadow transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
             >
               <FileText className="h-4 w-4 text-blue-600" /> Word
             </button>
             <button
-              onClick={printReport}
+              onClick={() => void printReport()}
               disabled={Boolean(exporting) || isPrinting}
               className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-2.5 py-2 text-[13px] sm:px-3 sm:text-sm font-bold text-white shadow transition hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-60"
             >
@@ -4233,6 +4289,43 @@ function ReportView({
               </select>
             )}
           </div>
+
+          {reportMode === "weekly" && availableWeeks.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+              <div className="min-w-0 flex-1 text-[13px] font-bold text-emerald-900 sm:text-sm">
+                บันทึกทุกสัปดาห์ในไฟล์เดียว
+                <span className="ml-1 font-semibold text-emerald-700">
+                  (สัปดาห์ที่ {availableWeeks[0]}–{availableWeeks[availableWeeks.length - 1]})
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void exportToWord(true)}
+                disabled={Boolean(exporting) || isPrinting}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[13px] font-bold text-slate-800 shadow-sm ring-1 ring-emerald-200 transition hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60 sm:text-sm"
+              >
+                {exporting === "word-all" ? (
+                  <Clock className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileText className="h-4 w-4 text-blue-600" />
+                )}
+                {exporting === "word-all" ? "กำลังสร้าง…" : "Word ทั้งหมด"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void printReport(true)}
+                disabled={Boolean(exporting) || isPrinting}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[13px] font-bold text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60 sm:text-sm"
+              >
+                {exporting === "pdf-all" ? (
+                  <Clock className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Printer className="h-4 w-4" />
+                )}
+                {exporting === "pdf-all" ? "กำลังสร้าง…" : "PDF ทั้งหมด"}
+              </button>
+            </div>
+          )}
 
           <details className="group rounded-xl border border-slate-200 bg-slate-50">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-bold text-slate-700 [&::-webkit-details-marker]:hidden">
