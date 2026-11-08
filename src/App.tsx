@@ -373,8 +373,6 @@ const formatThaiDateCompact = (dateStr: string | Date) => {
 const getThaiAcademicYear = (date: Date): number =>
   date.getFullYear() + 543 - (date.getMonth() <= 3 ? 1 : 0);
 
-// 21 weeks x 5 school days x max 3 points per day.
-const SEMESTER_MAX_SCORE = 21 * 5 * 3;
 
 const getInspectionRevisionTimestamp = (item: InspectionRecord): number => {
   for (const value of [item.updatedAt, item.timestamp, item.createdAt]) {
@@ -3022,6 +3020,26 @@ function ReportView({
       .reduce((sum, item) => sum + (Number(item.score) || 0), 0);
   };
 
+  // จำนวนวันที่มีการตรวจจริงของเขตนั้นในภาคเรียน (วันที่ไม่ได้ตรวจไม่ถูกนับเป็นศูนย์)
+  const getZoneInspectedDays = (zoneId: number): number => {
+    const days = new Set<string>();
+    approvedData.forEach((item) => {
+      if (
+        Number(item.zoneId) === Number(zoneId) &&
+        isAcademicWeekInTerm(getWeekNumFromDate(item.date), WEEKS.length)
+      ) {
+        days.add(formatDateKey(item.date));
+      }
+    });
+    return days.size;
+  };
+
+  /** เปอร์เซ็นต์ = คะแนนที่ได้ ÷ (จำนวนวันที่ตรวจ × 3) */
+  const getZonePercent = (zoneId: number): number => {
+    const days = getZoneInspectedDays(zoneId);
+    return days > 0 ? (getZoneTotalSemester(zoneId) / (days * 3)) * 100 : 0;
+  };
+
   const calculateGrade = (percent: number): string => {
     if (percent >= 80) return "ดีเยี่ยม";
     if (percent >= 70) return "ดี";
@@ -3130,7 +3148,7 @@ function ReportView({
           [
             "คิดเป็น %",
             ...ZONES.map((zone) =>
-              Number(((getZoneTotalSemester(zone.id) / SEMESTER_MAX_SCORE) * 100).toFixed(0))
+              Number(getZonePercent(zone.id).toFixed(0))
             ),
           ],
         ];
@@ -3441,8 +3459,7 @@ function ReportView({
   const getSemesterSummary = () => {
     const counts = { excellent: 0, good: 0, fair: 0, improve: 0 };
     ZONES.forEach((zone) => {
-      const total = getZoneTotalSemester(zone.id);
-      const percent = total > 0 ? (total / SEMESTER_MAX_SCORE) * 100 : 0;
+      const percent = getZonePercent(zone.id);
       if (percent >= 80) counts.excellent += 1;
       else if (percent >= 70) counts.good += 1;
       else if (percent >= 50) counts.fair += 1;
@@ -3629,8 +3646,8 @@ function ReportView({
         dataRows.push([
           "คิดเป็น %",
           ...ZONES.map((zone) => {
-            const total = getZoneTotalSemester(zone.id);
-            return total > 0 ? ((total / SEMESTER_MAX_SCORE) * 100).toFixed(0) : "-";
+            const percentValue = getZonePercent(zone.id);
+            return percentValue > 0 ? percentValue.toFixed(0) : "-";
           }),
         ]);
       }
@@ -5005,9 +5022,8 @@ function ReportView({
                           <div className="formal-cell-content">คิดเป็น %</div>
                         </td>
                         {ZONES.map((zone) => {
-                          const total = getZoneTotalSemester(zone.id);
-                          const percent =
-                            total > 0 ? ((total / SEMESTER_MAX_SCORE) * 100).toFixed(0) : "-";
+                          const percentValue = getZonePercent(zone.id);
+                          const percent = percentValue > 0 ? percentValue.toFixed(0) : "-";
                           return (
                             <td
                               key={`p-${zone.id}`}
@@ -5036,8 +5052,7 @@ function ReportView({
                         fr = 0,
                         im = 0;
                       ZONES.forEach((z) => {
-                        const score = getZoneTotalSemester(z.id);
-                        const pct = score > 0 ? (score / SEMESTER_MAX_SCORE) * 100 : 0;
+                        const pct = getZonePercent(z.id);
                         if (pct >= 80) ex++;
                         else if (pct >= 70) gd++;
                         else if (pct >= 50) fr++;
