@@ -61,6 +61,8 @@ import {
   MISSING_IMAGE_PLACEHOLDER,
   type ReportImage,
 } from "./report-images";
+import { makeQrDataUrl, makeQrModules } from "./qr";
+import { rankFeatured, SYSTEM_SITE_URL } from "./featured";
 
 type InspectionStatus = "pending" | "approved" | "rejected";
 
@@ -3501,6 +3503,9 @@ function ReportView({
   const SEMESTER_AWARD_NOTE =
     'รางวัลเกียรติยศ "ธงเขียว" และ "เกียรติบัตร" จะมอบให้แก่ห้องเรียนที่มีผลการประเมินอยู่ในระดับ "ดีเยี่ยม" (หรือมีคะแนนสูงสุดในรอบการประเมิน)';
 
+  const WORD_FEATURED_CANDIDATES = 10;
+  const WORD_FEATURED_LIMIT = 7;
+
   const createWordImageRun = (
     docx: DocxModule,
     image: ReportImage | null,
@@ -3792,8 +3797,24 @@ function ReportView({
         const weekSources: string[] = [];
         const sourcesOf = (item: (typeof weekRecords)[number]) =>
           (Array.isArray(item.images) ? item.images.slice(0, 3) : []).map(String);
+        // โหมดทุกสัปดาห์: เลือกเฉพาะรูปเด่นที่กระจายทุกเขต (เหลือ ~2 หน้า) ที่เหลือให้ดูผ่าน QR
+        const toCandidate = (item: (typeof weekRecords)[number]) => ({
+          zone: Number(item.zoneId),
+          score: Number(item.score),
+          date: String(item.date),
+        });
+        const pickFeatured = <T,>(rows: T[], toKey: (row: T) => { zone: number; score: number; date: string }, limit: number) => {
+          if (!allWeeks || rows.length <= limit) return rows;
+          const keep = new Set(rankFeatured(rows.map(toKey)).slice(0, limit));
+          return rows.filter((_, index) => keep.has(index));
+        };
+        const photoCandidates = pickFeatured(
+          weekRecords.filter((item) => sourcesOf(item).length > 0),
+          toCandidate,
+          WORD_FEATURED_CANDIDATES
+        );
         const loaded = await Promise.all(
-          weekRecords.map((item) =>
+          photoCandidates.map((item) =>
             Promise.all(
               sourcesOf(item).map((source) => {
                 weekSources.push(source);
@@ -3805,7 +3826,7 @@ function ReportView({
         if (loaded.some((row) => row.some((image) => !image))) {
           // รูปที่โดนจำกัดการโหลด ลองใหม่อีกรอบหลังรอสักครู่
           await new Promise((resolve) => window.setTimeout(resolve, 1500));
-          for (const [rowIndex, item] of weekRecords.entries()) {
+          for (const [rowIndex, item] of photoCandidates.entries()) {
             const sources = sourcesOf(item);
             for (let i = 0; i < loaded[rowIndex].length; i += 1) {
               if (!loaded[rowIndex][i]) {
@@ -3818,9 +3839,10 @@ function ReportView({
           (sum, row) => sum + row.filter((image) => !image).length,
           0
         );
-        const photoRecords = weekRecords
+        const loadedRecords = photoCandidates
           .map((item, index) => ({ item, images: loaded[index].filter((image) => image) }))
           .filter((record) => record.images.length > 0);
+        const photoRecords = pickFeatured(loadedRecords, (record) => toCandidate(record.item), WORD_FEATURED_LIMIT);
 
         if (photoRecords.length) {
           children.push(
@@ -3879,6 +3901,31 @@ function ReportView({
                   children: imageRuns.map((imageRun) =>
                     createWordPhotoCell(docx, imageRun, photoWidth)
                   ),
+                }),
+              ],
+            })
+          );
+        }
+        if (allWeeks && photoRecords.length) {
+          // QR ท้ายภาคผนวกของแต่ละสัปดาห์ ไปดูรูปทั้งหมดที่หน้าเว็บระบบ
+          const qrBytes = Uint8Array.from(atob(makeQrDataUrl(SYSTEM_SITE_URL, 10).split(",")[1] || ""), (ch) => ch.charCodeAt(0));
+          children.push(
+            new Paragraph({
+              keepNext: true,
+              spacing: { before: 200, after: 40 },
+              alignment: AlignmentType.CENTER,
+              children: [
+                new docx.ImageRun({ data: qrBytes, transformation: { width: 96, height: 96 } }),
+              ],
+            }),
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 0, after: 0 },
+              children: [
+                new TextRun({
+                  text: `สแกน QR เพื่อดูรูปหลักฐานทั้งหมดของสัปดาห์ที่ ${week} ได้ที่เว็บระบบตรวจเวร (เมนูรายงาน)`,
+                  font: WORD_FONT,
+                  size: 32,
                 }),
               ],
             })
@@ -4060,6 +4107,24 @@ function ReportView({
       // ไม่ให้ html2canvas ไปดึงรูปจากเน็ตเองตอนวาด ซึ่งเป็นสาเหตุรูปหาย/ช่องว่างขาว
       // โหมดหลายสัปดาห์ใช้รูปเล็กลงและล้างแคชทุกสัปดาห์ กันหน่วยความจำเต็มจนรูป/ตราหาย
       const imageEdge = allWeeks ? 640 : 1000;
+      if (allWeeks) {
+        // โหมดทุกสัปดาห์: เก็บเฉพาะรูปเด่นที่กระจายทุกเขต (ที่เหลือให้ดูผ่าน QR) จะได้ไม่ต้องโหลดรูปทั้งหมด
+        const photoRows = Array.from(exportNode.querySelectorAll<HTMLElement>(".photo-record")).filter((row) =>
+          row.querySelector("img")
+        );
+        const keepRows = new Set(
+          rankFeatured(
+            photoRows.map((row) => ({
+              zone: Number(row.dataset.zone),
+              score: Number(row.dataset.score),
+              date: row.dataset.date || "",
+            }))
+          ).slice(0, 10)
+        );
+        photoRows.forEach((row, index) => {
+          if (!keepRows.has(index)) row.remove();
+        });
+      }
       const usedSources: string[] = [];
       const failedImages: Array<{ img: HTMLImageElement; source: string }> = [];
       await Promise.all(
@@ -4156,9 +4221,15 @@ function ReportView({
         const records = Array.from(appendixSection.querySelectorAll<HTMLElement>(".photo-record"));
         const headingHeight = heading ? heading.getBoundingClientRect().height + 16 : 0;
         const recordHeights = records.map((record) => record.getBoundingClientRect().height + 24);
+        const recordKeys = records.map((record) => ({
+          zone: Number(record.dataset.zone),
+          score: Number(record.dataset.score),
+          date: record.dataset.date || "",
+        }));
         appendixSection.remove();
         const maxInner = (PAGE_H_MM * 96) / 25.4 - 48 - 30;
-        const makeBlock = (group: HTMLElement[], withHeading: boolean) => {
+        const QR_BLOCK_HEIGHT = 150;
+        const makeBlock = (group: HTMLElement[], withHeading: boolean, withQr: boolean) => {
           const shell = exportNode.cloneNode(false) as HTMLElement;
           shell.removeAttribute("id");
           const section = document.createElement("div");
@@ -4166,28 +4237,75 @@ function ReportView({
           const box = recordBox ? (recordBox.cloneNode(false) as HTMLElement) : document.createElement("div");
           group.forEach((record) => box.appendChild(record.cloneNode(true)));
           section.appendChild(box);
+          if (withQr) {
+            const qr = document.createElement("div");
+            qr.style.cssText = "text-align:center;margin-top:14px";
+            const qrBox = document.createElement("div");
+            qrBox.setAttribute("data-pdf-qr", "1");
+            qrBox.style.cssText = "width:100px;height:100px;margin:0 auto";
+            const caption = document.createElement("div");
+            caption.style.cssText = "font-size:14pt;margin-top:4px";
+            caption.textContent = `สแกน QR เพื่อดูรูปหลักฐานทั้งหมดของสัปดาห์ที่ ${weekValue ?? selectedReportWeek} ที่เว็บระบบตรวจเวร (เมนูรายงาน)`;
+            qr.appendChild(qrBox);
+            qr.appendChild(caption);
+            section.appendChild(qr);
+          }
           shell.appendChild(section);
           return shell;
         };
-        let group: HTMLElement[] = [];
-        let used = headingHeight;
-        let first = true;
-        records.forEach((record, index) => {
-          if (group.length && used + recordHeights[index] > maxInner) {
-            blocks.push(makeBlock(group, first));
-            first = false;
-            group = [];
-            used = 0;
+        // จัดรูปลงหน้า (เรียงตามเดิม) ถ้าเป็นโหมดทุกสัปดาห์เผื่อที่ให้ QR ท้ายสุด
+        const packGroups = (indices: number[], withQr: boolean) => {
+          const groups: number[][] = [];
+          let current: number[] = [];
+          let used = headingHeight;
+          indices.forEach((index) => {
+            if (current.length && used + recordHeights[index] > maxInner) {
+              groups.push(current);
+              current = [];
+              used = 0;
+            }
+            current.push(index);
+            used += recordHeights[index];
+          });
+          if (current.length) groups.push(current);
+          let qrGroup = -1;
+          if (withQr && groups.length) {
+            if (used + QR_BLOCK_HEIGHT <= maxInner) qrGroup = groups.length - 1;
+            else {
+              groups.push([]);
+              qrGroup = groups.length - 1;
+            }
           }
-          group.push(record);
-          used += recordHeights[index];
+          return { groups, qrGroup };
+        };
+        let packed = packGroups(
+          records.map((_, index) => index),
+          allWeeks
+        );
+        if (allWeeks && records.length) {
+          // รูปเด่น: เลือกตามอันดับ (กระจายทุกเขต) ให้พอดี 2 หน้า รวมที่ว่างสำหรับ QR
+          const ranked = rankFeatured(recordKeys);
+          for (let take = records.length; take >= 1; take -= 1) {
+            const chosen = ranked.slice(0, take).sort((a, b) => a - b);
+            packed = packGroups(chosen, true);
+            if (packed.groups.length <= 2) break;
+          }
+        }
+        packed.groups.forEach((indices, groupIndex) => {
+          blocks.push(
+            makeBlock(
+              indices.map((index) => records[index]),
+              groupIndex === 0,
+              groupIndex === packed.qrGroup
+            )
+          );
         });
-        if (group.length) blocks.push(makeBlock(group, first));
       }
 
       type PdfPhotoRect = { x: number; y: number; w: number; h: number; src: string; fit: string };
       const renderBlock = async (node: HTMLElement, hideImages: boolean) => {
         const rects: PdfPhotoRect[] = [];
+        const qrRects: Array<{ x: number; y: number; w: number; h: number }> = [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const worker: any = html2pdf()
           .set({
@@ -4198,6 +4316,15 @@ function ReportView({
                 const root = clonedDocument.querySelector<HTMLElement>(".html2pdf__container .pdf-block-root");
                 if (!root) return;
                 const rootRect = root.getBoundingClientRect();
+                root.querySelectorAll<HTMLElement>("[data-pdf-qr]").forEach((box) => {
+                  const r = box.getBoundingClientRect();
+                  qrRects.push({
+                    x: ((r.left - rootRect.left) / rootRect.width) * PAGE_W_MM,
+                    y: ((r.top - rootRect.top) / rootRect.width) * PAGE_W_MM,
+                    w: (r.width / rootRect.width) * PAGE_W_MM,
+                    h: (r.height / rootRect.width) * PAGE_W_MM,
+                  });
+                });
                 root.querySelectorAll<HTMLImageElement>("img[data-pdf-fit]").forEach((img) => {
                   const r = img.getBoundingClientRect();
                   rects.push({
@@ -4215,7 +4342,7 @@ function ReportView({
           })
           .from(node);
         const canvas: HTMLCanvasElement = await worker.toCanvas().get("canvas");
-        return { worker, rects, canvas };
+        return { worker, rects, qrRects, canvas };
       };
       const loadPdfImage = (src: string) =>
         new Promise<HTMLImageElement>((resolve, reject) => {
@@ -4303,8 +4430,34 @@ function ReportView({
           });
         }
         sharedPdf = await rendered.worker.toPdf().get("pdf");
+        sharedPdf.setPage(sharedPdf.getNumberOfPages());
+        if (rendered.qrRects.length) {
+          // QR วาดเป็นเวกเตอร์ลงใน PDF โดยตรง คมชัดและสแกนง่าย
+          const modules = makeQrModules(SYSTEM_SITE_URL);
+          const cell = (rect: { w: number }) => rect.w / (modules.length + 8);
+          sharedPdf.setFillColor(0, 0, 0);
+          for (const rect of rendered.qrRects) {
+            const unit = cell(rect);
+            modules.forEach((row, rowIndex) => {
+              let runStart = -1;
+              for (let col = 0; col <= row.length; col += 1) {
+                const dark = col < row.length && row[col];
+                if (dark && runStart < 0) runStart = col;
+                if (!dark && runStart >= 0) {
+                  sharedPdf.rect(
+                    8 + rect.x + (runStart + 4) * unit,
+                    8 + rect.y + (rowIndex + 4) * unit,
+                    (col - runStart) * unit,
+                    unit + 0.02,
+                    "F"
+                  );
+                  runStart = -1;
+                }
+              }
+            });
+          }
+        }
         if (overlay) {
-          sharedPdf.setPage(sharedPdf.getNumberOfPages());
           for (const rect of rendered.rects) {
             try {
               await drawPdfPhoto(sharedPdf, rect);
@@ -4955,6 +5108,9 @@ function ReportView({
                           key={item.id}
                           style={{ pageBreakInside: "avoid" }}
                           className="photo-record mb-2"
+                          data-zone={Number(item.zoneId)}
+                          data-score={Number(item.score)}
+                          data-date={item.date}
                         >
                           <div className="flex justify-between pb-1 mb-1 font-bold text-[15pt]">
                             <span>
