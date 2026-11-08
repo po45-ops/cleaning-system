@@ -63,6 +63,12 @@ import {
 } from "./report-images";
 import { makeQrDataUrl, makeQrModules } from "./qr";
 import { rankFeatured, SYSTEM_SITE_URL } from "./featured";
+import {
+  MAX_REPORT_PDF_BYTES,
+  fetchReportPdfLink,
+  prepareReportPdfLink,
+  uploadReportPdf,
+} from "./report-pdf-sync";
 
 type InspectionStatus = "pending" | "approved" | "rejected";
 
@@ -3567,6 +3573,17 @@ function ReportView({
 
       const children: Array<WordParagraph | WordTable> = [];
 
+      // QR ในไฟล์ Word: ใช้ลิงก์ไฟล์ PDF ฉบับเต็มบน Drive ถ้าอัปโหลดแล้ว ไม่งั้นชี้ไปหน้าเว็บระบบ
+      let wordQrTarget = SYSTEM_SITE_URL;
+      if (allWeeks) {
+        try {
+          const pdfLink = await fetchReportPdfLink(String(settings.term), String(settings.year));
+          if (pdfLink && pdfLink.ready) wordQrTarget = pdfLink.url;
+        } catch {
+          // ใช้ลิงก์หน้าเว็บแทน
+        }
+      }
+
       const logoImage = schoolLogo
         ? await loadReportImage(schoolLogo, { keepTransparency: true })
         : null;
@@ -3908,14 +3925,14 @@ function ReportView({
         }
         if (allWeeks && photoRecords.length) {
           // QR ท้ายภาคผนวกของแต่ละสัปดาห์ ไปดูรูปทั้งหมดที่หน้าเว็บระบบ
-          const qrBytes = Uint8Array.from(atob(makeQrDataUrl(SYSTEM_SITE_URL, 10).split(",")[1] || ""), (ch) => ch.charCodeAt(0));
+          const qrBytes = Uint8Array.from(atob(makeQrDataUrl(wordQrTarget, 10).split(",")[1] || ""), (ch) => ch.charCodeAt(0));
           children.push(
             new Paragraph({
               keepNext: true,
               spacing: { before: 200, after: 40 },
               alignment: AlignmentType.CENTER,
               children: [
-                new docx.ImageRun({ data: qrBytes, transformation: { width: 96, height: 96 } }),
+                new docx.ImageRun({ data: qrBytes, transformation: { width: 128, height: 128 } }),
               ],
             }),
             new Paragraph({
@@ -3923,7 +3940,7 @@ function ReportView({
               spacing: { before: 0, after: 0 },
               children: [
                 new TextRun({
-                  text: `สแกน QR เพื่อดูรูปหลักฐานทั้งหมดของสัปดาห์ที่ ${week} ได้ที่เว็บระบบตรวจเวร (เมนูรายงาน)`,
+                  text: `สแกน QR เพื่อเปิดไฟล์ PDF ฉบับเต็ม (รูปหลักฐานทุกสัปดาห์ของภาคเรียนนี้) ดูสัปดาห์ที่ ${week} และสัปดาห์อื่นได้`,
                   font: WORD_FONT,
                   size: 32,
                 }),
@@ -4035,15 +4052,24 @@ function ReportView({
     window.setTimeout(() => window.print(), 50);
   };
 
-  const printReport = async (allWeeks = false) => {
+  // mode "full" = ฉบับเต็ม (รูปทุกใบ ขนาดย่อ) สร้างเพื่ออัปโหลดขึ้น Drive เท่านั้น ไม่ดาวน์โหลด
+  const printReport = async (
+    allWeeks = false,
+    mode: "trimmed" | "full" = "trimmed",
+    qrTarget: string = SYSTEM_SITE_URL
+  ): Promise<boolean> => {
     const element = document.getElementById("printable-area");
-    if (!element) return;
+    if (!element) return false;
+    const fullMode = allWeeks && mode === "full";
+    const trimMode = allWeeks && !fullMode;
+    let succeeded = false;
     const originalWeek = selectedReportWeek;
     setPdfError("");
     setExportNotice("");
     setIsPrinting(true);
     setExporting(allWeeks ? "pdf-all" : "pdf");
     let holder: HTMLDivElement | null = null;
+    void qrTarget;
     try {
       const { default: html2pdf } = await import("html2pdf.js");
       try {
@@ -4106,8 +4132,8 @@ function ReportView({
       // แทนรูปทุกใบด้วยข้อมูลที่โหลดไว้แล้ว (คุมการโหลดพร้อมกัน + ลองใหม่เมื่อ Google จำกัด)
       // ไม่ให้ html2canvas ไปดึงรูปจากเน็ตเองตอนวาด ซึ่งเป็นสาเหตุรูปหาย/ช่องว่างขาว
       // โหมดหลายสัปดาห์ใช้รูปเล็กลงและล้างแคชทุกสัปดาห์ กันหน่วยความจำเต็มจนรูป/ตราหาย
-      const imageEdge = allWeeks ? 640 : 1000;
-      if (allWeeks) {
+      const imageEdge = fullMode ? 480 : allWeeks ? 640 : 1000;
+      if (trimMode) {
         // โหมดทุกสัปดาห์: เก็บเฉพาะรูปเด่นที่กระจายทุกเขต (ที่เหลือให้ดูผ่าน QR) จะได้ไม่ต้องโหลดรูปทั้งหมด
         const photoRows = Array.from(exportNode.querySelectorAll<HTMLElement>(".photo-record")).filter((row) =>
           row.querySelector("img")
@@ -4178,14 +4204,14 @@ function ReportView({
       const opt = {
         margin: [8, 8, 8, 8] as [number, number, number, number],
         filename: reportFileName("pdf"),
-        image: { type: "jpeg" as const, quality: allWeeks ? 0.85 : 0.98 },
+        image: { type: "jpeg" as const, quality: fullMode ? 0.7 : allWeeks ? 0.85 : 0.98 },
         pagebreak: {
           mode: ["css", "legacy"],
           before: [".page-break-before"],
           avoid: ["tr", ".avoid-break", ".photo-record"],
         },
         html2canvas: {
-          scale: allWeeks ? 1.5 : 2,
+          scale: fullMode ? 1.2 : allWeeks ? 1.5 : 2,
           imageTimeout: 0,
           useCORS: true,
           allowTaint: false,
@@ -4228,7 +4254,7 @@ function ReportView({
         }));
         appendixSection.remove();
         const maxInner = (PAGE_H_MM * 96) / 25.4 - 48 - 30;
-        const QR_BLOCK_HEIGHT = 150;
+        const QR_BLOCK_HEIGHT = 190;
         const makeBlock = (group: HTMLElement[], withHeading: boolean, withQr: boolean) => {
           const shell = exportNode.cloneNode(false) as HTMLElement;
           shell.removeAttribute("id");
@@ -4242,10 +4268,10 @@ function ReportView({
             qr.style.cssText = "text-align:center;margin-top:14px";
             const qrBox = document.createElement("div");
             qrBox.setAttribute("data-pdf-qr", "1");
-            qrBox.style.cssText = "width:100px;height:100px;margin:0 auto";
+            qrBox.style.cssText = "width:136px;height:136px;margin:0 auto";
             const caption = document.createElement("div");
             caption.style.cssText = "font-size:14pt;margin-top:4px";
-            caption.textContent = `สแกน QR เพื่อดูรูปหลักฐานทั้งหมดของสัปดาห์ที่ ${weekValue ?? selectedReportWeek} ที่เว็บระบบตรวจเวร (เมนูรายงาน)`;
+            caption.textContent = `สแกน QR เพื่อเปิดไฟล์ PDF ฉบับเต็ม (รูปหลักฐานทุกสัปดาห์ของภาคเรียนนี้) ดูสัปดาห์ที่ ${weekValue ?? selectedReportWeek} และสัปดาห์อื่นได้`;
             qr.appendChild(qrBox);
             qr.appendChild(caption);
             section.appendChild(qr);
@@ -4280,9 +4306,9 @@ function ReportView({
         };
         let packed = packGroups(
           records.map((_, index) => index),
-          allWeeks
+          trimMode
         );
-        if (allWeeks && records.length) {
+        if (trimMode && records.length) {
           // รูปเด่น: เลือกตามอันดับ (กระจายทุกเขต) ให้พอดี 2 หน้า รวมที่ว่างสำหรับ QR
           const ranked = rankFeatured(recordKeys);
           for (let take = records.length; take >= 1; take -= 1) {
@@ -4369,8 +4395,9 @@ function ReportView({
           pdf.addImage(rect.src, format, left + (rect.w - width) / 2, top + (rect.h - height) / 2, width, height);
           return;
         }
-        const pixelsW = Math.max(60, Math.round(rect.w * 8));
-        const pixelsH = Math.max(60, Math.round(rect.h * 8));
+        const density = fullMode ? 4.5 : allWeeks ? 6 : 8;
+        const pixelsW = Math.max(60, Math.round(rect.w * density));
+        const pixelsH = Math.max(60, Math.round(rect.h * density));
         const canvas = document.createElement("canvas");
         canvas.width = pixelsW;
         canvas.height = pixelsH;
@@ -4395,7 +4422,7 @@ function ReportView({
           pixelsW,
           pixelsH
         );
-        pdf.addImage(canvas.toDataURL("image/jpeg", 0.88), "JPEG", left, top, rect.w, rect.h);
+        pdf.addImage(canvas.toDataURL("image/jpeg", fullMode ? 0.72 : allWeeks ? 0.8 : 0.88), "JPEG", left, top, rect.w, rect.h);
         pdf.setDrawColor(203, 213, 225);
         pdf.setLineWidth(0.2);
         pdf.roundedRect(left, top, rect.w, rect.h, 1.2, 1.2, "S");
@@ -4433,7 +4460,7 @@ function ReportView({
         sharedPdf.setPage(sharedPdf.getNumberOfPages());
         if (rendered.qrRects.length) {
           // QR วาดเป็นเวกเตอร์ลงใน PDF โดยตรง คมชัดและสแกนง่าย
-          const modules = makeQrModules(SYSTEM_SITE_URL);
+          const modules = makeQrModules(qrTarget);
           const cell = (rect: { w: number }) => rect.w / (modules.length + 8);
           sharedPdf.setFillColor(0, 0, 0);
           for (const rect of rendered.qrRects) {
@@ -4476,16 +4503,31 @@ function ReportView({
         await new Promise((resolve) => window.setTimeout(resolve, 150));
       }
       }
-      if (allWeeks && sharedPdf) {
+      if (fullMode && sharedPdf) {
+        const fullBlob: Blob = sharedPdf.output("blob");
+        if (fullBlob.size > MAX_REPORT_PDF_BYTES) {
+          setExportNotice(
+            `ไฟล์ฉบับเต็มใหญ่เกินไป (${(fullBlob.size / 1048576).toFixed(1)} MB) อัปโหลดขึ้น Google Drive ไม่ได้ ไฟล์ที่ดาวน์โหลดไปยังใช้ได้ตามปกติ`
+          );
+        } else {
+          const uploaded = await uploadReportPdf(String(settings.term), String(settings.year), fullBlob);
+          setExportNotice(
+            uploaded
+              ? `อัปโหลดไฟล์ฉบับเต็ม (${(fullBlob.size / 1048576).toFixed(1)} MB) ไปแทนที่ไฟล์บน Google Drive แล้ว QR ในรายงานเปิดไฟล์นี้ได้เลย`
+              : "ส่งไฟล์ฉบับเต็มไป Google Drive แล้ว แต่ตรวจยืนยันไม่สำเร็จ ลองเปิด QR ดู หรือกดส่งออกใหม่อีกครั้ง"
+          );
+        }
+      } else if (allWeeks && sharedPdf) {
         sharedPdf.save(reportFileName("pdf", true));
       } else if (sharedPdf) {
         sharedPdf.save(reportFileName("pdf"));
       }
-      if (missingImages > 0) {
+      if (missingImages > 0 && !fullMode) {
         setExportNotice(
           `สร้างไฟล์ PDF แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (ตัดออกจากไฟล์) รอสักครู่แล้วกดส่งออกใหม่ได้`
         );
       }
+      succeeded = true;
     } catch (error) {
       console.error(error);
       // Native alerts block finally, leaving the export controls disabled.
@@ -4495,6 +4537,26 @@ function ReportView({
       if (allWeeks) setSelectedReportWeek(originalWeek);
       setIsPrinting(false);
       setExporting("");
+    }
+    return succeeded;
+  };
+
+  // ส่งออก PDF ทุกสัปดาห์: ฉบับย่อ (ดาวน์โหลด มี QR) แล้วสร้างฉบับเต็มอัปโหลดแทนไฟล์บน Google Drive
+  const printReportAllWeeks = async () => {
+    setExportNotice("");
+    const term = String(settings.term);
+    const year = String(settings.year);
+    setExporting("pdf-all");
+    const link = await prepareReportPdfLink(term, year);
+    if (!link) {
+      setExportNotice(
+        "ติดต่อ Google Drive เพื่อทำลิงก์ไฟล์ไม่ได้ (อาจยังไม่ได้อัปเดต Apps Script) QR ในไฟล์จึงชี้ไปหน้าเว็บระบบแทน"
+      );
+    }
+    const ok = await printReport(true, "trimmed", link ? link.url : SYSTEM_SITE_URL);
+    if (ok && link) {
+      setExportNotice("ดาวน์โหลดฉบับย่อแล้ว กำลังสร้างฉบับเต็มเพื่ออัปโหลดขึ้น Google Drive ห้ามปิดหน้านี้ รอสักครู่...");
+      await printReport(true, "full", link.url);
     }
   };
 
@@ -4627,7 +4689,8 @@ function ReportView({
               const run = (all: boolean) => {
                 setExportMenu("");
                 if (kind === "word") void exportToWord(all);
-                else void printReport(all);
+                else if (all) void printReportAllWeeks();
+                else void printReport(false);
               };
               const busy = exporting === kind || exporting === `${kind}-all`;
               return (
