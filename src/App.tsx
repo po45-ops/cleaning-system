@@ -3020,25 +3020,49 @@ function ReportView({
       .reduce((sum, item) => sum + (Number(item.score) || 0), 0);
   };
 
-  // จำนวนวันที่มีการตรวจจริงของเขตนั้นในภาคเรียน (วันที่ไม่ได้ตรวจไม่ถูกนับเป็นศูนย์)
-  const getZoneInspectedDays = (zoneId: number): number => {
+  // วันที่มีการตรวจจริงในภาคเรียน (วันหยุด/วันที่ไม่มีการตรวจ จะไม่มีข้อมูลจึงไม่ถูกนับเอง)
+  const getInspectedDates = (zoneId?: number): Set<string> => {
     const days = new Set<string>();
     approvedData.forEach((item) => {
-      if (
-        Number(item.zoneId) === Number(zoneId) &&
-        isAcademicWeekInTerm(getWeekNumFromDate(item.date), WEEKS.length)
-      ) {
+      if (zoneId !== undefined && Number(item.zoneId) !== Number(zoneId)) return;
+      if (isAcademicWeekInTerm(getWeekNumFromDate(item.date), WEEKS.length)) {
         days.add(formatDateKey(item.date));
       }
     });
-    return days.size;
+    return days;
   };
+  const getZoneInspectedDays = (zoneId: number): number => getInspectedDates(zoneId).size;
+  const getSchoolInspectedDays = (): number => getInspectedDates().size;
 
-  /** เปอร์เซ็นต์ = คะแนนที่ได้ ÷ (จำนวนวันที่ตรวจ × 3) */
+  /** เปอร์เซ็นต์ = คะแนนที่ได้ ÷ (จำนวนวันที่ห้องนั้นถูกตรวจ × 3) = ค่าเฉลี่ยต่อวันที่ตรวจ */
   const getZonePercent = (zoneId: number): number => {
     const days = getZoneInspectedDays(zoneId);
     return days > 0 ? (getZoneTotalSemester(zoneId) / (days * 3)) * 100 : 0;
   };
+
+  const MIN_COVERAGE = 0.6;
+  /** ห้องที่ถูกตรวจน้อยกว่า 60% ของวันตรวจทั้งโรงเรียน ไม่นับเป็นระดับ "ดีเยี่ยม" */
+  const isLowCoverage = (zoneId: number): boolean => {
+    const schoolDays = getSchoolInspectedDays();
+    const zoneDays = getZoneInspectedDays(zoneId);
+    return schoolDays > 0 && zoneDays > 0 && zoneDays < schoolDays * MIN_COVERAGE;
+  };
+  const getZoneGradeBucket = (zoneId: number): "excellent" | "good" | "fair" | "improve" => {
+    const percent = getZonePercent(zoneId);
+    if (percent >= 80) return isLowCoverage(zoneId) ? "good" : "excellent";
+    if (percent >= 70) return "good";
+    if (percent >= 50) return "fair";
+    return "improve";
+  };
+  const percentLabel = (zoneId: number): string => {
+    const percent = getZonePercent(zoneId);
+    if (percent <= 0) return "-";
+    return `${percent.toFixed(0)}${isLowCoverage(zoneId) ? "*" : ""}`;
+  };
+  const lowCoverageNote = (): string =>
+    ZONES.some((zone) => isLowCoverage(zone.id) && getZonePercent(zone.id) > 0)
+      ? "* ถูกตรวจน้อยกว่า 60% ของวันตรวจทั้งโรงเรียน ไม่นับเป็นระดับ \"ดีเยี่ยม\""
+      : "";
 
   const calculateGrade = (percent: number): string => {
     if (percent >= 80) return "ดีเยี่ยม";
@@ -3151,6 +3175,7 @@ function ReportView({
               Number(getZonePercent(zone.id).toFixed(0))
             ),
           ],
+          ["จำนวนวันที่ตรวจ", ...ZONES.map((zone) => getZoneInspectedDays(zone.id))],
         ];
       }
 
@@ -3459,11 +3484,7 @@ function ReportView({
   const getSemesterSummary = () => {
     const counts = { excellent: 0, good: 0, fair: 0, improve: 0 };
     ZONES.forEach((zone) => {
-      const percent = getZonePercent(zone.id);
-      if (percent >= 80) counts.excellent += 1;
-      else if (percent >= 70) counts.good += 1;
-      else if (percent >= 50) counts.fair += 1;
-      else counts.improve += 1;
+      counts[getZoneGradeBucket(zone.id)] += 1;
     });
     const share = (count: number) =>
       ZONES.length > 0
@@ -3562,8 +3583,8 @@ function ReportView({
         );
       }
       const logoRun = createWordImageRun(docx, logoImage, {
-        maxWidth: isWeekly ? 90 : 60,
-        maxHeight: isWeekly ? 90 : 60,
+        maxWidth: isWeekly ? 90 : 48,
+        maxHeight: isWeekly ? 90 : 48,
       });
       if (logoRun) {
         children.push(
@@ -3594,12 +3615,12 @@ function ReportView({
         );
       } else {
         children.push(
-          wordText(docx, "แบบสรุปผลการประเมินรายภาคเรียน", { bold: true, size: 48 }),
-          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 44 }),
+          wordText(docx, "แบบสรุปผลการประเมินรายภาคเรียน", { bold: true, size: 44 }),
+          wordText(docx, "โรงเรียนไตรธารวิทยา", { bold: true, size: 40 }),
           wordText(
             docx,
             `ประจำภาคเรียนที่ ${settings.term} ปีการศึกษา ${settings.year}`,
-            { size: 32, after: 160 }
+            { size: 32, after: 100 }
           )
         );
       }
@@ -3645,17 +3666,15 @@ function ReportView({
         dataRows.push(["รวมคะแนน", ...ZONES.map((zone) => getZoneTotalSemester(zone.id))]);
         dataRows.push([
           "คิดเป็น %",
-          ...ZONES.map((zone) => {
-            const percentValue = getZonePercent(zone.id);
-            return percentValue > 0 ? percentValue.toFixed(0) : "-";
-          }),
+          ...ZONES.map((zone) => percentLabel(zone.id)),
         ]);
+        dataRows.push(["วันที่ตรวจ", ...ZONES.map((zone) => getZoneInspectedDays(zone.id) || "-")]);
       }
 
       const cellSize = isWeekly ? 26 : 26;
       const cellPadding = isWeekly ? 110 : 0;
       const rowHeight = isWeekly ? { value: 700, rule: docx.HeightRule.ATLEAST } : undefined;
-      const cellLine = isWeekly ? undefined : 340;
+      const cellLine = isWeekly ? undefined : 290;
       children.push(
         new Table({
           width: { size: WORD_CONTENT_WIDTH, type: WidthType.DXA },
@@ -3682,7 +3701,7 @@ function ReportView({
                   cantSplit: true,
                   height: rowHeight,
                   children: row.map((value, columnIndex) => {
-                    const isSummaryRow = !isWeekly && rowIndex >= dataRows.length - 2;
+                    const isSummaryRow = !isWeekly && rowIndex >= dataRows.length - 3;
                     return createWordCell(docx, value, {
                       bold:
                         columnIndex === 0 ||
@@ -3741,6 +3760,7 @@ function ReportView({
                     ),
                     wordText(docx, "หมายเหตุ :", { bold: true, size: 32, align: left, before: 80 }),
                     wordText(docx, SEMESTER_AWARD_NOTE, { size: 32, align: left }),
+                    ...(lowCoverageNote() ? [wordText(docx, lowCoverageNote(), { size: 32, align: left })] : []),
                   ],
                 }),
               ],
@@ -3748,7 +3768,7 @@ function ReportView({
           ],
         });
         children.push(
-          wordText(docx, "", { before: 200 }),
+          wordText(docx, "", { before: 40, size: 16 }),
           createWordLayoutTable(docx, [
             { width: boxWidth, children: [summaryBox] },
             {
@@ -4122,6 +4142,7 @@ function ReportView({
       const PAGE_W_MM = 194;
       const PAGE_H_MM = 281;
       exportNode.classList.add("pdf-block-root");
+      exportNode.style.paddingBottom = "0";
       exportNode.removeAttribute("id");
       const appendixSection =
         Array.from(exportNode.querySelectorAll<HTMLElement>(".page-break-before")).find((section) =>
@@ -5002,13 +5023,13 @@ function ReportView({
                         </tr>
                       ))}
                       <tr className="font-bold bg-slate-50">
-                        <td className="border border-black py-1 px-1 text-center whitespace-nowrap align-middle">
+                        <td className="border border-black py-0 px-1 text-center whitespace-nowrap align-middle">
                           <div className="formal-cell-content">รวมคะแนน</div>
                         </td>
                         {ZONES.map((zone) => (
                           <td
                             key={`t-${zone.id}`}
-                            className="border border-black py-1 px-1 text-center"
+                            className="border border-black py-0 px-1 text-center"
                           >
                             <div className="formal-cell-content">
                               {getZoneTotalSemester(zone.id)}
@@ -5018,23 +5039,30 @@ function ReportView({
                       </tr>
                       {/* 🚀 แถวคิดเป็น % */}
                       <tr className="font-bold bg-slate-50">
-                        <td className="border border-black py-1 px-1 text-center whitespace-nowrap align-middle">
+                        <td className="border border-black py-0 px-1 text-center whitespace-nowrap align-middle">
                           <div className="formal-cell-content">คิดเป็น %</div>
                         </td>
-                        {ZONES.map((zone) => {
-                          const percentValue = getZonePercent(zone.id);
-                          const percent = percentValue > 0 ? percentValue.toFixed(0) : "-";
-                          return (
-                            <td
-                              key={`p-${zone.id}`}
-                              className="border border-black py-1 px-1 text-center"
-                            >
-                              <div className="formal-cell-content">
-                                {percent !== "-" ? `${percent}` : "-"}
-                              </div>
-                            </td>
-                          );
-                        })}
+                        {ZONES.map((zone) => (
+                          <td
+                            key={`p-${zone.id}`}
+                            className="border border-black py-0 px-1 text-center"
+                          >
+                            <div className="formal-cell-content">{percentLabel(zone.id)}</div>
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td className="border border-black py-0 px-1 text-center whitespace-nowrap align-middle">
+                          <div className="formal-cell-content">วันที่ตรวจ</div>
+                        </td>
+                        {ZONES.map((zone) => (
+                          <td
+                            key={`d-${zone.id}`}
+                            className="border border-black py-0 px-1 text-center"
+                          >
+                            <div className="formal-cell-content">{getZoneInspectedDays(zone.id) || "-"}</div>
+                          </td>
+                        ))}
                       </tr>
                     </tbody>
                   </table>
@@ -5052,10 +5080,10 @@ function ReportView({
                         fr = 0,
                         im = 0;
                       ZONES.forEach((z) => {
-                        const pct = getZonePercent(z.id);
-                        if (pct >= 80) ex++;
-                        else if (pct >= 70) gd++;
-                        else if (pct >= 50) fr++;
+                        const bucket = getZoneGradeBucket(z.id);
+                        if (bucket === "excellent") ex++;
+                        else if (bucket === "good") gd++;
+                        else if (bucket === "fair") fr++;
                         else im++;
                       });
                       const totalRooms = ZONES.length;
@@ -5114,6 +5142,9 @@ function ReportView({
                             จะมอบให้แก่ห้องเรียนที่มีผลการประเมินอยู่ในระดับ
                             "ดีเยี่ยม" (หรือมีคะแนนสูงสุดในรอบการประเมิน)
                           </p>
+                          {lowCoverageNote() && (
+                            <p className="leading-tight mt-1 ml-2">{lowCoverageNote()}</p>
+                          )}
                         </div>
                       );
                     })()}
