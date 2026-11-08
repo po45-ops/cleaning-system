@@ -111,6 +111,19 @@ const decode = async (
   };
 };
 
+/** รูปจาก Google ขอขนาดย่อมาเลย (=w640) โหลดเร็วขึ้นมากและโดนจำกัดน้อยลง */
+const withGoogleSize = (source: string, edge: number): string => {
+  try {
+    const url = new URL(source);
+    if (!/(^|\.)googleusercontent\.com$/.test(url.hostname) || url.search) return source;
+    const sizeSuffix = url.pathname.match(/=[a-z0-9-]+$/i);
+    const path = sizeSuffix ? url.pathname.slice(0, sizeSuffix.index) : url.pathname;
+    return `${url.origin}${path}=w${Math.max(200, edge)}`;
+  } catch {
+    return source;
+  }
+};
+
 const loadOnce = async (
   source: string,
   keepTransparency: boolean,
@@ -118,7 +131,14 @@ const loadOnce = async (
 ): Promise<ReportImage | null> => {
   await acquire();
   try {
-    const blob = await fetchBlob(source);
+    const resized = withGoogleSize(source, maxEdge);
+    let blob: Blob;
+    try {
+      blob = await fetchBlob(resized);
+    } catch (resizeError) {
+      if (resized === source) throw resizeError;
+      blob = await fetchBlob(source);
+    }
     const decoded = await decode(blob);
     try {
       const scale = Math.min(1, maxEdge / Math.max(decoded.width, decoded.height));

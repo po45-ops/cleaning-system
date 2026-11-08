@@ -3747,36 +3747,60 @@ function ReportView({
       }
 
       // --- ภาคผนวกรูปถ่าย (รายสัปดาห์) ---
+      // รูปที่โหลดไม่ได้จะถูกตัดออก รูปที่เหลือขยับขึ้นมาแทน ไม่เหลือกรอบว่าง
       if (isWeekly) {
-        children.push(
-          new Paragraph({
-            pageBreakBefore: true,
-            spacing: { after: 120 },
-            children: [
-              new TextRun({
-                text: `ภาคผนวก: ภาพถ่ายหลักฐานประกอบการตรวจ (สัปดาห์ที่ ${week})`,
-                bold: true,
-                font: WORD_FONT,
-                size: 40,
-              }),
-            ],
-          })
-        );
-        if (!weekRecords.length) {
-          children.push(wordText(docx, "ไม่มีข้อมูลรูปภาพในสัปดาห์นี้"));
-        }
-
-        // เริ่มโหลดรูปทั้งหมดก่อน (ตัวโหลดคุมจำนวนพร้อมกันเอง) แล้วค่อยประกอบตามลำดับ
         const photoWidth = Math.floor(WORD_CONTENT_WIDTH / 3);
         const wordEdge = allWeeks ? 640 : 1000;
         const weekSources: string[] = [];
-        const imageJobs = weekRecords.map((item) =>
-          (Array.isArray(item.images) ? item.images.slice(0, 3) : []).map((source) => {
-            weekSources.push(String(source));
-            return loadReportImage(String(source), { maxEdge: wordEdge });
-          })
+        const sourcesOf = (item: (typeof weekRecords)[number]) =>
+          (Array.isArray(item.images) ? item.images.slice(0, 3) : []).map(String);
+        const loaded = await Promise.all(
+          weekRecords.map((item) =>
+            Promise.all(
+              sourcesOf(item).map((source) => {
+                weekSources.push(source);
+                return loadReportImage(source, { maxEdge: wordEdge });
+              })
+            )
+          )
         );
-        for (const [index, item] of weekRecords.entries()) {
+        if (loaded.some((row) => row.some((image) => !image))) {
+          // รูปที่โดนจำกัดการโหลด ลองใหม่อีกรอบหลังรอสักครู่
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
+          for (const [rowIndex, item] of weekRecords.entries()) {
+            const sources = sourcesOf(item);
+            for (let i = 0; i < loaded[rowIndex].length; i += 1) {
+              if (!loaded[rowIndex][i]) {
+                loaded[rowIndex][i] = await loadReportImage(sources[i], { maxEdge: wordEdge });
+              }
+            }
+          }
+        }
+        missingImages += loaded.reduce(
+          (sum, row) => sum + row.filter((image) => !image).length,
+          0
+        );
+        const photoRecords = weekRecords
+          .map((item, index) => ({ item, images: loaded[index].filter((image) => image) }))
+          .filter((record) => record.images.length > 0);
+
+        if (photoRecords.length) {
+          children.push(
+            new Paragraph({
+              pageBreakBefore: true,
+              spacing: { after: 120 },
+              children: [
+                new TextRun({
+                  text: `ภาคผนวก: ภาพถ่ายหลักฐานประกอบการตรวจ (สัปดาห์ที่ ${week})`,
+                  bold: true,
+                  font: WORD_FONT,
+                  size: 40,
+                }),
+              ],
+            })
+          );
+        }
+        for (const { item, images } of photoRecords) {
           const zone = ZONES.find((zoneItem) => zoneItem.id === Number(item.zoneId));
           children.push(
             new Paragraph({
@@ -3804,24 +3828,13 @@ function ReportView({
               ],
             })
           );
-          const images = await Promise.all(imageJobs[index]);
-          if (images.some((image) => !image)) {
-            // รูปที่โดนจำกัดการโหลด ลองใหม่อีกรอบหลังรอสักครู่
-            await new Promise((resolve) => window.setTimeout(resolve, 1200));
-            const sources = Array.isArray(item.images) ? item.images.slice(0, 3) : [];
-            for (let i = 0; i < images.length; i += 1) {
-              if (!images[i]) images[i] = await loadReportImage(String(sources[i]), { maxEdge: wordEdge });
-            }
-          }
-          missingImages += images.filter((image) => !image).length;
           const imageRuns = images.map((image) =>
             createWordImageRun(docx, image, { maxWidth: 215, maxHeight: 160 })
           );
-          while (imageRuns.length < 3) imageRuns.push(null);
           children.push(
             new Table({
-              width: { size: photoWidth * 3, type: WidthType.DXA },
-              columnWidths: [photoWidth, photoWidth, photoWidth],
+              width: { size: photoWidth * imageRuns.length, type: WidthType.DXA },
+              columnWidths: imageRuns.map(() => photoWidth),
               rows: [
                 new TableRow({
                   cantSplit: true,
@@ -3884,7 +3897,7 @@ function ReportView({
       downloadBlob(blob, reportFileName("docx", allWeeks));
       if (missingImages > 0) {
         setExportNotice(
-          `สร้างไฟล์ Word แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (แสดงเป็น "ไม่มีรูปภาพ") รอสักครู่แล้วกดส่งออกใหม่ได้`
+          `สร้างไฟล์ Word แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (ตัดออกจากไฟล์) รอสักครู่แล้วกดส่งออกใหม่ได้`
         );
       }
     } catch (error) {
@@ -3955,6 +3968,22 @@ function ReportView({
         console.warn("Unable to preload TH Sarabun PSK", fontError);
       }
 
+      // วอร์มอัพ: ให้ html2canvas โหลดสไตล์ของหน้าเว็บให้เสร็จก่อน กันหน้าแรกออกมาไม่มีสไตล์/ตราใหญ่ผิดปกติ
+      try {
+        const warm = document.createElement("div");
+        warm.style.cssText = "position:fixed;left:0;top:0;z-index:-1000;width:50px;height:20px;background:#fff";
+        warm.className = "font-sarabun text-[16pt]";
+        warm.textContent = "ก";
+        document.body.appendChild(warm);
+        try {
+          await html2pdf().set({ html2canvas: { scale: 0.2, logging: false } }).from(warm).toCanvas();
+        } finally {
+          warm.remove();
+        }
+      } catch (warmError) {
+        console.warn("warm-up skipped", warmError);
+      }
+
       let missingImages = 0;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let sharedPdf: any = null;
@@ -4001,7 +4030,7 @@ function ReportView({
           const source = img.getAttribute("data-src") || img.getAttribute("src") || "";
           if (!source || source === MISSING_IMAGE_PLACEHOLDER) return;
           const isLogo = source === schoolLogo;
-          const loaded = await loadReportImage(source, { keepTransparency: isLogo, maxEdge: imageEdge });
+          const loaded = await loadReportImage(source, { keepTransparency: isLogo, maxEdge: isLogo ? 400 : imageEdge });
           if (!isLogo) usedSources.push(source);
           if (!loaded && !isLogo) failedImages.push({ img, source });
           img.removeAttribute("srcset");
@@ -4027,9 +4056,20 @@ function ReportView({
             }
           } else {
             missingImages += 1;
+            // รูปที่ดึงไม่ได้ ตัดกรอบออกเลย ไม่ให้เหลือช่องว่าง
+            img.parentElement?.remove();
           }
         }
       }
+      // ตัดรายการที่ไม่เหลือรูปเลย และหัวข้อภาคผนวกที่ไม่มีรายการ แล้วให้รูปที่เหลือขยับขึ้น
+      exportNode.querySelectorAll(".photo-record").forEach((record) => {
+        if (!record.querySelector("img")) record.remove();
+      });
+      exportNode.querySelectorAll(".page-break-before").forEach((section) => {
+        if (/ภาคผนวก/.test(section.textContent || "") && !section.querySelector(".photo-record")) {
+          section.remove();
+        }
+      });
 
       const opt = {
         margin: [8, 8, 8, 8] as [number, number, number, number],
@@ -4042,6 +4082,7 @@ function ReportView({
         },
         html2canvas: {
           scale: allWeeks ? 1.5 : 2,
+          imageTimeout: 0,
           useCORS: true,
           allowTaint: false,
           backgroundColor: "#ffffff",
@@ -4082,7 +4123,7 @@ function ReportView({
       }
       if (missingImages > 0) {
         setExportNotice(
-          `สร้างไฟล์ PDF แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (แสดงเป็น "ไม่มีรูปภาพ") รอสักครู่แล้วกดส่งออกใหม่ได้`
+          `สร้างไฟล์ PDF แล้ว แต่ดึงรูปไม่ได้ ${missingImages} รูป (ตัดออกจากไฟล์) รอสักครู่แล้วกดส่งออกใหม่ได้`
         );
       }
     } catch (error) {
