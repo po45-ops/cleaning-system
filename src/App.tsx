@@ -56,6 +56,7 @@ import {
 } from "lucide-react";
 import PublicDashboard from "./PublicDashboard";
 import {
+  evictReportImages,
   loadReportImage,
   MISSING_IMAGE_PLACEHOLDER,
   type ReportImage,
@@ -3767,10 +3768,13 @@ function ReportView({
 
         // เริ่มโหลดรูปทั้งหมดก่อน (ตัวโหลดคุมจำนวนพร้อมกันเอง) แล้วค่อยประกอบตามลำดับ
         const photoWidth = Math.floor(WORD_CONTENT_WIDTH / 3);
+        const wordEdge = allWeeks ? 640 : 1000;
+        const weekSources: string[] = [];
         const imageJobs = weekRecords.map((item) =>
-          (Array.isArray(item.images) ? item.images.slice(0, 3) : []).map((source) =>
-            loadReportImage(String(source))
-          )
+          (Array.isArray(item.images) ? item.images.slice(0, 3) : []).map((source) => {
+            weekSources.push(String(source));
+            return loadReportImage(String(source), { maxEdge: wordEdge });
+          })
         );
         for (const [index, item] of weekRecords.entries()) {
           const zone = ZONES.find((zoneItem) => zoneItem.id === Number(item.zoneId));
@@ -3801,6 +3805,14 @@ function ReportView({
             })
           );
           const images = await Promise.all(imageJobs[index]);
+          if (images.some((image) => !image)) {
+            // รูปที่โดนจำกัดการโหลด ลองใหม่อีกรอบหลังรอสักครู่
+            await new Promise((resolve) => window.setTimeout(resolve, 1200));
+            const sources = Array.isArray(item.images) ? item.images.slice(0, 3) : [];
+            for (let i = 0; i < images.length; i += 1) {
+              if (!images[i]) images[i] = await loadReportImage(String(sources[i]), { maxEdge: wordEdge });
+            }
+          }
           missingImages += images.filter((image) => !image).length;
           const imageRuns = images.map((image) =>
             createWordImageRun(docx, image, { maxWidth: 215, maxHeight: 160 })
@@ -3821,6 +3833,7 @@ function ReportView({
             })
           );
         }
+        if (allWeeks) evictReportImages(weekSources, { maxEdge: wordEdge });
       }
       }
 
@@ -3978,14 +3991,19 @@ function ReportView({
 
       // แทนรูปทุกใบด้วยข้อมูลที่โหลดไว้แล้ว (คุมการโหลดพร้อมกัน + ลองใหม่เมื่อ Google จำกัด)
       // ไม่ให้ html2canvas ไปดึงรูปจากเน็ตเองตอนวาด ซึ่งเป็นสาเหตุรูปหาย/ช่องว่างขาว
-      
+      // โหมดหลายสัปดาห์ใช้รูปเล็กลงและล้างแคชทุกสัปดาห์ กันหน่วยความจำเต็มจนรูป/ตราหาย
+      const imageEdge = allWeeks ? 640 : 1000;
+      const usedSources: string[] = [];
+      const failedImages: Array<{ img: HTMLImageElement; source: string }> = [];
       await Promise.all(
         Array.from(exportNode.querySelectorAll("img")).map(async (img) => {
-          const source = img.getAttribute("src") || "";
+          // ใช้ที่อยู่รูปต้นฉบับ ไม่ใช้ src ที่หน้าจอเปลี่ยนเป็นป้าย "ไม่มีรูปภาพ" ไปแล้วเพราะโหลดไม่ทัน
+          const source = img.getAttribute("data-src") || img.getAttribute("src") || "";
           if (!source || source === MISSING_IMAGE_PLACEHOLDER) return;
           const isLogo = source === schoolLogo;
-          const loaded = await loadReportImage(source, { keepTransparency: isLogo });
-          if (!loaded && !isLogo) missingImages += 1;
+          const loaded = await loadReportImage(source, { keepTransparency: isLogo, maxEdge: imageEdge });
+          if (!isLogo) usedSources.push(source);
+          if (!loaded && !isLogo) failedImages.push({ img, source });
           img.removeAttribute("srcset");
           img.setAttribute("src", loaded ? loaded.dataUrl : isLogo ? source : MISSING_IMAGE_PLACEHOLDER);
           try {
@@ -3995,18 +4013,35 @@ function ReportView({
           }
         })
       );
+      if (failedImages.length) {
+        // รอให้ Google คลายการจำกัด แล้วลองดึงรูปที่หายอีกรอบ
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        for (const { img, source } of failedImages) {
+          const retried = await loadReportImage(source, { maxEdge: imageEdge });
+          if (retried) {
+            img.setAttribute("src", retried.dataUrl);
+            try {
+              await img.decode();
+            } catch {
+              // ปล่อยให้ html2canvas วาดต่อได้
+            }
+          } else {
+            missingImages += 1;
+          }
+        }
+      }
 
       const opt = {
         margin: [8, 8, 8, 8] as [number, number, number, number],
         filename: reportFileName("pdf"),
-        image: { type: "jpeg" as const, quality: 0.98 },
+        image: { type: "jpeg" as const, quality: allWeeks ? 0.85 : 0.98 },
         pagebreak: {
           mode: ["css", "legacy"],
           before: [".page-break-before"],
           avoid: ["tr", ".avoid-break", ".photo-record"],
         },
         html2canvas: {
-          scale: 2,
+          scale: allWeeks ? 1.5 : 2,
           useCORS: true,
           allowTaint: false,
           backgroundColor: "#ffffff",
@@ -4033,6 +4068,12 @@ function ReportView({
       }
       sharedPdf = await worker.toPdf().get("pdf");
       void weekIndex;
+      if (allWeeks) {
+        holder?.remove();
+        holder = null;
+        evictReportImages(usedSources, { maxEdge: imageEdge });
+        await new Promise((resolve) => window.setTimeout(resolve, 150));
+      }
       }
       if (allWeeks && sharedPdf) {
         sharedPdf.save(reportFileName("pdf", true));
@@ -4687,6 +4728,7 @@ function ReportView({
                                 <div key={idx} className="text-center">
                                   <img
                                     src={img}
+                                    data-src={img}
                                     alt="Evidence"
                                     className="w-full h-[140px] object-cover rounded-md border border-slate-300"
                                     onError={(e) => {

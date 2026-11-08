@@ -111,13 +111,17 @@ const decode = async (
   };
 };
 
-const loadOnce = async (source: string, keepTransparency: boolean): Promise<ReportImage | null> => {
+const loadOnce = async (
+  source: string,
+  keepTransparency: boolean,
+  maxEdge: number
+): Promise<ReportImage | null> => {
   await acquire();
   try {
     const blob = await fetchBlob(source);
     const decoded = await decode(blob);
     try {
-      const scale = Math.min(1, MAX_EDGE_PX / Math.max(decoded.width, decoded.height));
+      const scale = Math.min(1, maxEdge / Math.max(decoded.width, decoded.height));
       const width = Math.max(1, Math.round(decoded.width * scale));
       const height = Math.max(1, Math.round(decoded.height * scale));
       const canvas = document.createElement("canvas");
@@ -148,13 +152,13 @@ const loadOnce = async (source: string, keepTransparency: boolean): Promise<Repo
 /** โหลดรูปสำหรับรายงาน คืน null ถ้าโหลดไม่ได้ (ไม่ throw) */
 export const loadReportImage = (
   source: string,
-  { keepTransparency = false }: { keepTransparency?: boolean } = {}
+  { keepTransparency = false, maxEdge = MAX_EDGE_PX }: { keepTransparency?: boolean; maxEdge?: number } = {}
 ): Promise<ReportImage | null> => {
   if (!source) return Promise.resolve(null);
-  const key = `${keepTransparency ? "png" : "jpg"}|${source}`;
+  const key = `${keepTransparency ? "png" : "jpg"}|${maxEdge}|${source}`;
   let pending = cache.get(key);
   if (!pending) {
-    pending = loadOnce(source, keepTransparency);
+    pending = loadOnce(source, keepTransparency, maxEdge);
     cache.set(key, pending);
     // รูปที่โหลดไม่ได้ ไม่เก็บแคชถาวร กดส่งออกครั้งถัดไปจะลองใหม่
     void pending.then((result) => {
@@ -162,6 +166,16 @@ export const loadReportImage = (
     });
   }
   return pending;
+};
+
+/** ล้างแคชของรูปที่ใช้เสร็จแล้ว (ลดการใช้หน่วยความจำเมื่อส่งออกหลายสัปดาห์) */
+export const evictReportImages = (
+  sources: string[],
+  { keepTransparency = false, maxEdge = MAX_EDGE_PX }: { keepTransparency?: boolean; maxEdge?: number } = {}
+): void => {
+  for (const source of sources) {
+    cache.delete(`${keepTransparency ? "png" : "jpg"}|${maxEdge}|${source}`);
+  }
 };
 
 /** ป้ายแทนรูปที่โหลดไม่ได้ เป็นรูปฝังในหน้า ไม่พึ่งเว็บภายนอก */
