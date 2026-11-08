@@ -4014,7 +4014,7 @@ function ReportView({
       holder.style.zIndex = "-1000";
       holder.style.pointerEvents = "none";
       holder.style.background = "white";
-      holder.style.width = "794px";
+      holder.style.width = "194mm";
       holder.appendChild(exportNode);
       document.body.appendChild(holder);
 
@@ -4034,6 +4034,7 @@ function ReportView({
           if (!isLogo) usedSources.push(source);
           if (!loaded && !isLogo) failedImages.push({ img, source });
           img.removeAttribute("srcset");
+          img.setAttribute("data-pdf-fit", isLogo ? "contain" : "cover");
           img.setAttribute("src", loaded ? loaded.dataUrl : isLogo ? source : MISSING_IMAGE_PLACEHOLDER);
           try {
             await img.decode();
@@ -4098,16 +4099,171 @@ function ReportView({
         },
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const worker: any = html2pdf().set(opt).from(exportNode);
-      if (sharedPdf) {
-        // ต่อหน้าถัดไปในไฟล์เดียวกัน (เริ่มหน้าใหม่ก่อนวาดสัปดาห์นี้)
-        sharedPdf.addPage();
-        await worker.then(function (this: { prop: { pdf: unknown } }) {
-          this.prop.pdf = sharedPdf;
+      // ----- แบ่งเป็น "บล็อกละหน้า" แล้วฝังรูป/ตราลงใน PDF โดยตรง (ไม่ผ่านการวาดภาพของ html2canvas) -----
+      // ตัวหนังสือ/ตารางถูกแปลงเป็นภาพ ส่วนรูปถ่ายและตราโรงเรียนวางลงตำแหน่งเดียวกันด้วย jsPDF
+      // จึงไม่มีกรณีรูปว่าง/ตราหายอีก และไฟล์เล็กลง รูปคมขึ้น
+      const PAGE_W_MM = 194;
+      const PAGE_H_MM = 281;
+      exportNode.classList.add("pdf-block-root");
+      exportNode.removeAttribute("id");
+      const appendixSection =
+        Array.from(exportNode.querySelectorAll<HTMLElement>(".page-break-before")).find((section) =>
+          /ภาคผนวก/.test(section.textContent || "")
+        ) || null;
+      const blocks: HTMLElement[] = [exportNode];
+      if (appendixSection) {
+        const heading = appendixSection.querySelector("h2");
+        const recordBox = appendixSection.querySelector<HTMLElement>(".space-y-4");
+        const records = Array.from(appendixSection.querySelectorAll<HTMLElement>(".photo-record"));
+        const headingHeight = heading ? heading.getBoundingClientRect().height + 16 : 0;
+        const recordHeights = records.map((record) => record.getBoundingClientRect().height + 24);
+        appendixSection.remove();
+        const maxInner = (PAGE_H_MM * 96) / 25.4 - 48 - 30;
+        const makeBlock = (group: HTMLElement[], withHeading: boolean) => {
+          const shell = exportNode.cloneNode(false) as HTMLElement;
+          shell.removeAttribute("id");
+          const section = document.createElement("div");
+          if (withHeading && heading) section.appendChild(heading.cloneNode(true));
+          const box = recordBox ? (recordBox.cloneNode(false) as HTMLElement) : document.createElement("div");
+          group.forEach((record) => box.appendChild(record.cloneNode(true)));
+          section.appendChild(box);
+          shell.appendChild(section);
+          return shell;
+        };
+        let group: HTMLElement[] = [];
+        let used = headingHeight;
+        let first = true;
+        records.forEach((record, index) => {
+          if (group.length && used + recordHeights[index] > maxInner) {
+            blocks.push(makeBlock(group, first));
+            first = false;
+            group = [];
+            used = 0;
+          }
+          group.push(record);
+          used += recordHeights[index];
         });
+        if (group.length) blocks.push(makeBlock(group, first));
       }
-      sharedPdf = await worker.toPdf().get("pdf");
+
+      type PdfPhotoRect = { x: number; y: number; w: number; h: number; src: string; fit: string };
+      const renderBlock = async (node: HTMLElement, hideImages: boolean) => {
+        const rects: PdfPhotoRect[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const worker: any = html2pdf()
+          .set({
+            ...opt,
+            html2canvas: {
+              ...opt.html2canvas,
+              onclone: (clonedDocument: Document) => {
+                const root = clonedDocument.querySelector<HTMLElement>(".html2pdf__container .pdf-block-root");
+                if (!root) return;
+                const rootRect = root.getBoundingClientRect();
+                root.querySelectorAll<HTMLImageElement>("img[data-pdf-fit]").forEach((img) => {
+                  const r = img.getBoundingClientRect();
+                  rects.push({
+                    x: ((r.left - rootRect.left) / rootRect.width) * PAGE_W_MM,
+                    y: ((r.top - rootRect.top) / rootRect.width) * PAGE_W_MM,
+                    w: (r.width / rootRect.width) * PAGE_W_MM,
+                    h: (r.height / rootRect.width) * PAGE_W_MM,
+                    src: img.getAttribute("src") || "",
+                    fit: img.getAttribute("data-pdf-fit") || "cover",
+                  });
+                  if (hideImages) img.style.visibility = "hidden";
+                });
+              },
+            },
+          })
+          .from(node);
+        const canvas: HTMLCanvasElement = await worker.toCanvas().get("canvas");
+        return { worker, rects, canvas };
+      };
+      const loadPdfImage = (src: string) =>
+        new Promise<HTMLImageElement>((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error("image decode failed"));
+          image.src = src;
+        });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const drawPdfPhoto = async (pdf: any, rect: PdfPhotoRect) => {
+        if (!rect.src || rect.src === MISSING_IMAGE_PLACEHOLDER || rect.w <= 0 || rect.h <= 0) return;
+        const image = await loadPdfImage(rect.src);
+        const left = 8 + rect.x;
+        const top = 8 + rect.y;
+        if (rect.fit === "contain") {
+          const ratio = image.naturalWidth / image.naturalHeight;
+          let width = rect.w;
+          let height = width / ratio;
+          if (height > rect.h) {
+            height = rect.h;
+            width = height * ratio;
+          }
+          const format = rect.src.startsWith("data:image/png") ? "PNG" : "JPEG";
+          pdf.addImage(rect.src, format, left + (rect.w - width) / 2, top + (rect.h - height) / 2, width, height);
+          return;
+        }
+        const pixelsW = Math.max(60, Math.round(rect.w * 8));
+        const pixelsH = Math.max(60, Math.round(rect.h * 8));
+        const canvas = document.createElement("canvas");
+        canvas.width = pixelsW;
+        canvas.height = pixelsH;
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, pixelsW, pixelsH);
+        const target = rect.w / rect.h;
+        const source = image.naturalWidth / image.naturalHeight;
+        let sw = image.naturalWidth;
+        let sh = image.naturalHeight;
+        if (source > target) sw = sh * target;
+        else sh = sw / target;
+        context.drawImage(
+          image,
+          (image.naturalWidth - sw) / 2,
+          (image.naturalHeight - sh) / 2,
+          sw,
+          sh,
+          0,
+          0,
+          pixelsW,
+          pixelsH
+        );
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.88), "JPEG", left, top, rect.w, rect.h);
+        pdf.setDrawColor(203, 213, 225);
+        pdf.setLineWidth(0.2);
+        pdf.roundedRect(left, top, rect.w, rect.h, 1.2, 1.2, "S");
+      };
+
+      for (const block of blocks) {
+        let rendered = await renderBlock(block, true);
+        let overlay = true;
+        const heightMm = (rendered.canvas.height / rendered.canvas.width) * PAGE_W_MM;
+        if (heightMm > PAGE_H_MM + 0.5) {
+          // บล็อกสูงเกินหนึ่งหน้า (เช่นหมายเหตุยาวมาก) ใช้วิธีวาดรูปในภาพเลย
+          rendered = await renderBlock(block, false);
+          overlay = false;
+        }
+        if (sharedPdf) {
+          // ต่อหน้าถัดไปในไฟล์เดียวกัน
+          sharedPdf.addPage();
+          await rendered.worker.then(function (this: { prop: { pdf: unknown } }) {
+            this.prop.pdf = sharedPdf;
+          });
+        }
+        sharedPdf = await rendered.worker.toPdf().get("pdf");
+        if (overlay) {
+          sharedPdf.setPage(sharedPdf.getNumberOfPages());
+          for (const rect of rendered.rects) {
+            try {
+              await drawPdfPhoto(sharedPdf, rect);
+            } catch (drawError) {
+              console.warn("วางรูปลง PDF ไม่สำเร็จ", drawError);
+              missingImages += 1;
+            }
+          }
+        }
+      }
       void weekIndex;
       if (allWeeks) {
         holder?.remove();
