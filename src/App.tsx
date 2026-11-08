@@ -3760,7 +3760,6 @@ function ReportView({
                     ),
                     wordText(docx, "หมายเหตุ :", { bold: true, size: 32, align: left, before: 80 }),
                     wordText(docx, SEMESTER_AWARD_NOTE, { size: 32, align: left }),
-                    ...(lowCoverageNote() ? [wordText(docx, lowCoverageNote(), { size: 32, align: left })] : []),
                   ],
                 }),
               ],
@@ -3768,7 +3767,9 @@ function ReportView({
           ],
         });
         children.push(
-          wordText(docx, "", { before: 40, size: 16 }),
+          lowCoverageNote()
+            ? wordText(docx, lowCoverageNote(), { size: 32, align: AlignmentType.LEFT, before: 40, after: 40 })
+            : wordText(docx, "", { before: 40, size: 16 }),
           createWordLayoutTable(docx, [
             { width: boxWidth, children: [summaryBox] },
             {
@@ -4276,7 +4277,19 @@ function ReportView({
       for (const block of blocks) {
         let rendered = await renderBlock(block, true);
         let overlay = true;
-        const heightMm = (rendered.canvas.height / rendered.canvas.width) * PAGE_W_MM;
+        let heightMm = (rendered.canvas.height / rendered.canvas.width) * PAGE_W_MM;
+        // เนื้อหาเกินหนึ่งหน้า (เช่น หมายเหตุยาว) ให้ย่อตัวอักษรของตารางและกล่องสรุปทีละน้อยจนลงหน้าเดียว
+        for (const factor of [0.94, 0.88, 0.82, 0.76]) {
+          if (heightMm <= PAGE_H_MM) break;
+          block.querySelectorAll<HTMLElement>("table").forEach((el) => {
+            el.style.fontSize = `${13 * factor}pt`;
+          });
+          block.querySelectorAll<HTMLElement>(".avoid-break > div").forEach((el) => {
+            el.style.fontSize = `${13 * factor}pt`;
+          });
+          rendered = await renderBlock(block, true);
+          heightMm = (rendered.canvas.height / rendered.canvas.width) * PAGE_W_MM;
+        }
         if (heightMm > PAGE_H_MM + 0.5) {
           // บล็อกสูงเกินหนึ่งหน้า (เช่นหมายเหตุยาวมาก) ใช้วิธีวาดรูปในภาพเลย
           rendered = await renderBlock(block, false);
