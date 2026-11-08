@@ -4065,7 +4065,7 @@ function ReportView({
     let succeeded = false;
     const originalWeek = selectedReportWeek;
     setPdfError("");
-    setExportNotice("");
+    if (!allWeeks) setExportNotice("");
     setIsPrinting(true);
     setExporting(allWeeks ? "pdf-all" : "pdf");
     let holder: HTMLDivElement | null = null;
@@ -4553,10 +4553,14 @@ function ReportView({
         "ติดต่อ Google Drive เพื่อทำลิงก์ไฟล์ไม่ได้ (อาจยังไม่ได้อัปเดต Apps Script) QR ในไฟล์จึงชี้ไปหน้าเว็บระบบแทน"
       );
     }
-    const ok = await printReport(true, "trimmed", link ? link.url : SYSTEM_SITE_URL);
-    if (ok && link) {
-      setExportNotice("ดาวน์โหลดฉบับย่อแล้ว กำลังสร้างฉบับเต็มเพื่ออัปโหลดขึ้น Google Drive ห้ามปิดหน้านี้ รอสักครู่...");
+    if (link) {
+      // อัปโหลดฉบับเต็มก่อน แล้วค่อยดาวน์โหลดฉบับย่อ เพื่อให้ QR ในไฟล์ที่ได้เปิดไฟล์จริงได้ทันที
+      setExportNotice("ขั้นที่ 1/2 กำลังสร้างไฟล์ฉบับเต็มและอัปโหลดขึ้น Google Drive ห้ามปิดหน้านี้ ใช้เวลาสักครู่...");
       await printReport(true, "full", link.url);
+    }
+    const downloaded = await printReport(true, "trimmed", link ? link.url : SYSTEM_SITE_URL);
+    if (downloaded) {
+      setExportNotice((previous) => (previous ? `${previous} (ดาวน์โหลดไฟล์ฉบับย่อเรียบร้อยแล้ว)` : previous));
     }
   };
 
