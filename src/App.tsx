@@ -2932,8 +2932,43 @@ function ReportView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, schoolLogo]);
 
+  // ---- เลือกปีการศึกษา: มีเฉพาะปีที่มีข้อมูลจริง + ปีที่กด "เพิ่มปี" เอง ----
+  const EXTRA_YEARS_KEY = "cleaning_extra_academic_years";
+  const [extraYears, setExtraYears] = useState<number[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(EXTRA_YEARS_KEY) || "[]") as unknown;
+      return Array.isArray(parsed)
+        ? parsed.map(Number).filter((n) => Number.isInteger(n) && n > 2500 && n < 2700)
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const academicYearOptions = (() => {
+    const years = new Set<number>(extraYears);
+    for (const item of inspections) {
+      const d = parseLocalDate(item.date);
+      if (!Number.isNaN(d.getTime())) years.add(getThaiAcademicYear(d));
+    }
+    const selected = Number(settings.year);
+    if (Number.isInteger(selected) && selected > 2500) years.add(selected);
+    if (years.size === 0) years.add(getThaiAcademicYear(new Date()));
+    return Array.from(years).sort((a, b) => a - b);
+  })();
+  const addNextAcademicYear = () => {
+    const next = Math.max(...academicYearOptions) + 1;
+    const updated = Array.from(new Set([...extraYears, next]));
+    setExtraYears(updated);
+    try {
+      localStorage.setItem(EXTRA_YEARS_KEY, JSON.stringify(updated));
+    } catch {
+      /* ignore */
+    }
+    setSettings((current) => ({ ...current, year: String(next) }));
+  };
+
   const approvedData = inspections.filter((i) => i.status === "approved");
-  const WEEKS = Array.from({ length: 21 }, (_, i) => i + 1);
+  const WEEKS =Array.from({ length: 21 }, (_, i) => i + 1);
 
   const getWeekNumFromDate = (dateStr: string | Date): number => {
     if (!dateStr || !settings.semesterStart) return 0;
@@ -4812,14 +4847,22 @@ function ReportView({
               ))}
               <label className="ml-1 flex flex-1 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-white shadow-sm sm:flex-none">
                 <span className="whitespace-nowrap text-[11px] font-bold opacity-90 sm:text-xs">ปีการศึกษา</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
+                <select
                   aria-label="ปีการศึกษา"
                   value={settings.year}
-                  onChange={(event) => setSettings({ ...settings, year: event.target.value })}
-                  className="w-14 sm:w-16 rounded-md bg-white/95 px-1.5 py-0.5 text-center text-sm font-extrabold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-200 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-                />
+                  onChange={(event) => {
+                    if (event.target.value === "__add__") addNextAcademicYear();
+                    else setSettings({ ...settings, year: event.target.value });
+                  }}
+                  className="rounded-md bg-white/95 py-0.5 pl-2 pr-1 text-center text-sm font-extrabold text-emerald-800 outline-none focus:ring-2 focus:ring-emerald-200"
+                >
+                  {academicYearOptions.map((y) => (
+                    <option key={y} value={String(y)}>
+                      {y}
+                    </option>
+                  ))}
+                  <option value="__add__">＋ เพิ่มปี {Math.max(...academicYearOptions) + 1}</option>
+                </select>
               </label>
             </div>
 
