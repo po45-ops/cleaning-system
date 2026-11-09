@@ -182,10 +182,14 @@ const saveServerPassword = async (
 const patchCredentialTable = (): void => {
   const heading = Array.from(
     document.querySelectorAll<HTMLElement>("h1, h2, h3")
-  ).find((element) =>
-    element.textContent?.includes("จัดการรหัสผ่านสภานักเรียน")
+  ).find(
+    (element) =>
+      element.textContent?.includes("จัดการรหัสผ่านสภานักเรียน") ||
+      element.textContent?.includes("บัญชีสภานักเรียน")
   );
-  const section = heading?.parentElement;
+  // หัวข้อใหม่อยู่ในแถบหัวการ์ด ส่วนตารางอยู่ในการ์ดเดียวกัน จึงต้องขึ้นไปหาการ์ดก่อน
+  const section =
+    heading?.closest<HTMLElement>("div.rounded-2xl") || heading?.parentElement;
   const table = section?.querySelector<HTMLTableElement>("table");
   if (!table) return;
 
