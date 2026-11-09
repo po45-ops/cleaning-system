@@ -228,6 +228,11 @@ const ZONES = [
     class: "ป.1",
     fullClass: "ชั้นประถมศึกษาปีที่ 1",
     desc: "หน้าอาคารและรอบอาคารสีม่วงของ ป.6, ม.1 และ ป.1 และทางเดินมาห้องประชุม",
+    spots: [
+      "หน้าอาคารสีม่วง ของ ป.6, ม.1 และ ป.1",
+      "รอบอาคารสีม่วง ของ ป.6, ม.1 และ ป.1",
+      "ทางเดินมาห้องประชุม",
+    ],
     toilet: "ข้างห้องครูต่าย",
   },
   {
@@ -236,6 +241,12 @@ const ZONES = [
     class: "ป.2",
     fullClass: "ชั้นประถมศึกษาปีที่ 2",
     desc: "รอบอาคาร ป.2–ป.3 รวมอาคารโรงจอดรถ รอบบริเวณหน้าหอพักหญิง และบ้านพักครู",
+    spots: [
+      "รอบอาคาร ป.2–ป.3",
+      "อาคารโรงจอดรถ",
+      "รอบบริเวณหน้าหอพักหญิง",
+      "บ้านพักครู",
+    ],
     toilet: "ห้องน้ำลอยฟ้า",
   },
   {
@@ -244,6 +255,10 @@ const ZONES = [
     class: "ป.3",
     fullClass: "ชั้นประถมศึกษาปีที่ 3",
     desc: "ถนนและทางเข้าโรงเรียน ตั้งแต่ทางเข้าจนถึงโรงจอดรถหน้าโรงอาหาร (บริเวณหน้าโรงเรียน)",
+    spots: [
+      "ถนนและทางเข้าโรงเรียน",
+      "บริเวณหน้าโรงเรียน ตั้งแต่ทางเข้าจนถึงโรงจอดรถหน้าโรงอาหาร",
+    ],
     toilet: "ห้องน้ำลอยฟ้า",
   },
   {
@@ -252,6 +267,11 @@ const ZONES = [
     class: "ป.4",
     fullClass: "ชั้นประถมศึกษาปีที่ 4",
     desc: "หน้าอาคารหน้าห้องวิชาการครูเป้า บันไดและทางลง (สนามหญ้าและป้าย)",
+    spots: [
+      "หน้าอาคารหน้าห้องวิชาการครูเป้า",
+      "บันไดและทางลง",
+      "สนามหญ้าและป้าย",
+    ],
     toilet: "ข้างห้องครูแวว",
   },
   {
@@ -260,6 +280,10 @@ const ZONES = [
     class: "ป.5",
     fullClass: "ชั้นประถมศึกษาปีที่ 5",
     desc: "สนามโรงเรียน และอาคารอเนกประสงค์",
+    spots: [
+      "สนามโรงเรียน",
+      "อาคารอเนกประสงค์",
+    ],
     toilet: "ข้างห้องครูแก้ม และข้างห้องครูแวว",
   },
   {
@@ -268,6 +292,11 @@ const ZONES = [
     class: "ป.6",
     fullClass: "ชั้นประถมศึกษาปีที่ 6",
     desc: "สนามบาสเกตบอล รอบอาคารยูเอสโอเน็ต (USO Net) โดยรอบ และศาลา",
+    spots: [
+      "สนามบาสเกตบอล",
+      "รอบอาคารยูเอสโอเน็ต (USO Net) โดยรอบ",
+      "ศาลา",
+    ],
     toilet: "ข้างห้องครูต่าย",
   },
   {
@@ -276,6 +305,11 @@ const ZONES = [
     class: "ม.1",
     fullClass: "ชั้นมัธยมศึกษาปีที่ 1",
     desc: "โรงซักล้าง โรงอาหาร และโรงจอดรถหน้าโรงอาหาร",
+    spots: [
+      "โรงซักล้าง",
+      "โรงอาหาร",
+      "โรงจอดรถหน้าโรงอาหาร",
+    ],
     toilet: "ข้างห้องครูต่าย",
   },
   {
@@ -284,6 +318,12 @@ const ZONES = [
     class: "ม.2",
     fullClass: "ชั้นมัธยมศึกษาปีที่ 2",
     desc: "หลังอาคารห้องคณิตศาสตร์ รอบอาคารห้องครูก้อย แถวหน้าข้างห้อง ป.4 และทางเดินข้างโรงอาหาร",
+    spots: [
+      "หลังอาคารห้องคณิตศาสตร์",
+      "รอบอาคารห้องครูก้อย",
+      "แถวหน้าข้างห้อง ป.4",
+      "ทางเดินข้างโรงอาหาร",
+    ],
     toilet: "ห้องน้ำลอยฟ้า",
   },
   {
@@ -292,6 +332,10 @@ const ZONES = [
     class: "ม.3",
     fullClass: "ชั้นมัธยมศึกษาปีที่ 3",
     desc: "ทางเดินหน้าห้องน้ำ และแถวหลังทางเดินหน้าอาคาร",
+    spots: [
+      "ทางเดินหน้าห้องน้ำ",
+      "แถวหลังทางเดินหน้าอาคาร",
+    ],
     toilet: "ข้างห้องครูแวว",
   },
 ];
@@ -1607,6 +1651,13 @@ function StudentForm({ onSave, inspections }: StudentFormProps) {
   const [images, setImages] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+  const [checkedSpots, setCheckedSpots] = useState<number[]>([]);
+
+  const selectedZone = ZONES.find((z) => z.id === parseInt(formData.zoneId));
+  const toggleSpot = (index: number) =>
+    setCheckedSpots((prev) =>
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
+    );
 
   const hasExistingInspection = (
     zoneId: string | number,
@@ -1690,6 +1741,7 @@ function StudentForm({ onSave, inspections }: StudentFormProps) {
             : "บันทึกข้อมูลลงฐานข้อมูลสำเร็จ! รอครูผู้ดูแลยืนยัน"
         );
         setFormData({ ...formData, zoneId: "", score: null, notes: "" });
+        setCheckedSpots([]);
         setImages([]);
         setTimeout(() => setMessage(""), 4000);
       } else {
@@ -1715,6 +1767,39 @@ function StudentForm({ onSave, inspections }: StudentFormProps) {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <details className="group rounded-lg border border-slate-200 bg-slate-50">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-bold text-emerald-800">
+            <span>ดูจุดตรวจทั้ง {ZONES.length} เขต</span>
+            <ChevronDown className="h-4 w-4 transition group-open:rotate-180" />
+          </summary>
+          <div className="space-y-2 border-t border-slate-200 p-3">
+            {ZONES.map((z) => (
+              <div
+                key={z.id}
+                className={`rounded-lg border bg-white p-3 text-sm ${
+                  String(z.id) === formData.zoneId
+                    ? "border-emerald-400"
+                    : "border-slate-200"
+                }`}
+              >
+                <div className="font-bold text-slate-800">
+                  {z.name} <span className="font-normal text-slate-500">({z.class})</span>
+                </div>
+                <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-slate-600">
+                  {z.spots.map((spot) => (
+                    <li key={spot}>{spot}</li>
+                  ))}
+                </ol>
+                {z.toilet && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    ห้องน้ำใกล้เคียง (ไม่ให้คะแนน): {z.toilet}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-semibold mb-2">
@@ -1739,9 +1824,10 @@ function StudentForm({ onSave, inspections }: StudentFormProps) {
             <select
               className="w-full p-3 border rounded-lg outline-none"
               value={formData.zoneId}
-              onChange={(e) =>
-                setFormData({ ...formData, zoneId: e.target.value })
-              }
+              onChange={(e) => {
+                setFormData({ ...formData, zoneId: e.target.value });
+                setCheckedSpots([]);
+              }}
               required
             >
               <option value="">-- เลือกเขตพื้นที่ --</option>
@@ -1762,16 +1848,58 @@ function StudentForm({ onSave, inspections }: StudentFormProps) {
                 <span className="font-bold">มีรายการเดิมอยู่แล้ว</span> การบันทึกจะแทนที่ชุดเดิม
               </div>
             )}
-            <div className="bg-slate-50 p-3 rounded-lg border text-sm text-slate-600">
-              <span className="font-semibold text-emerald-700">รายละเอียด:</span>{" "}
-              {ZONES.find((z) => z.id === parseInt(formData.zoneId))?.desc}
-              {ZONES.find((z) => z.id === parseInt(formData.zoneId))?.toilet && (
-                <span className="mt-1 block text-xs text-slate-500">
-                  ห้องน้ำใกล้เคียง (ไม่ให้คะแนน):{" "}
-                  {ZONES.find((z) => z.id === parseInt(formData.zoneId))?.toilet}
-                </span>
-              )}
-            </div>
+            {selectedZone && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-slate-700">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="font-bold text-emerald-800">
+                    จุดที่ต้องตรวจใน {selectedZone.name} ({selectedZone.spots.length} จุด)
+                  </span>
+                  <span className="text-xs font-semibold text-emerald-700">
+                    ตรวจแล้ว {checkedSpots.length}/{selectedZone.spots.length}
+                  </span>
+                </div>
+                <ul className="space-y-1.5">
+                  {selectedZone.spots.map((spot, index) => {
+                    const done = checkedSpots.includes(index);
+                    return (
+                      <li key={spot}>
+                        <button
+                          type="button"
+                          onClick={() => toggleSpot(index)}
+                          aria-pressed={done}
+                          className={`flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left transition ${
+                            done
+                              ? "border-emerald-400 bg-white text-emerald-800"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300"
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                              done
+                                ? "bg-emerald-500 text-white"
+                                : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            {done ? "✓" : index + 1}
+                          </span>
+                          <span className={done ? "line-through decoration-emerald-300" : ""}>
+                            {spot}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="mt-2 text-xs text-slate-500">
+                  ติ๊กเมื่อเดินตรวจแต่ละจุดแล้ว (ใช้ช่วยจำ ไม่บังคับ)
+                </p>
+                {selectedZone.toilet && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    ห้องน้ำใกล้เคียง (ไม่ให้คะแนน): {selectedZone.toilet}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
